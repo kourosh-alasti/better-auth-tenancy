@@ -37,7 +37,8 @@
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "better-auth": "^1.6.16",
     "typescript": "^6.0.3",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@better-auth/core": "^1.6.16",
