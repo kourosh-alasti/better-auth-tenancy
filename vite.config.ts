@@ -20,7 +20,7 @@ export default defineConfig({
       typeAware: true,
       typeCheck: true,
     },
-    ignorePatterns: ["tests/*"],
+    ignorePatterns: ["tests/*", "examples/**"],
   },
   fmt: {},
   test: {
