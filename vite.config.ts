@@ -7,8 +7,13 @@ export default defineConfig({
   pack: {
     dts: {
       tsgo: true,
+      build: true,
+      incremental: true,
     },
+    format: ["esm"],
     exports: true,
+    entry: ["./src/index.ts", "./src/client.ts"],
+    treeshake: true,
   },
   lint: {
     options: {
@@ -17,4 +22,8 @@ export default defineConfig({
     },
   },
   fmt: {},
+  test: {
+    clearMocks: true,
+    restoreMocks: true,
+  },
 });
