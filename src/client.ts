@@ -19,7 +19,7 @@ export const tenantAuthClient = () => {
       "/tenant/oauth-config/register": "POST",
       "/tenant/oauth-config/list": "GET",
       "/tenant/oauth-config/delete": "POST",
-    },
+    } as const,
     atomListeners: [
       {
         matcher: (path: string) =>
