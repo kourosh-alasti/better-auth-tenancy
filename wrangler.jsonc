@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "better-auth-tenancy-docs",
+  "compatibility_date": "2026-06-28",
+  "routes": [
+    {
+      "pattern": "better-auth-tenancy.alasti.company",
+      "custom_domain": true,
+    },
+  ],
+  "assets": {
+    "directory": "./docs/.vitepress/dist",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash",
+  },
+}
