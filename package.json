@@ -23,6 +23,8 @@
   "scripts": {
     "build": "vp pack && vp run nextjs-demo#build",
     "dev": "vp pack --watch",
+    "lint": "vp lint",
+    "fmt": "vp fmt --check",
     "test": "vp test",
     "check": "vp check",
     "docs:dev": "vitepress dev docs",
@@ -42,8 +44,7 @@
     "oxc-minify": "^0.96.0",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:",
-    "vitepress": "^2.0.0-alpha.17",
-    "vitest": "catalog:"
+    "vitepress": "^2.0.0-alpha.17"
   },
   "peerDependencies": {
     "@better-auth/core": "^1.6.16",
