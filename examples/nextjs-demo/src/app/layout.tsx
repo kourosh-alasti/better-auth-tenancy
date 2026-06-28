@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Better Auth Tenancy Demo",
-  description: "Demo app showcasing the @better-auth/tenancy plugin",
+  description: "Demo app showcasing the better-auth-tenancy plugin",
 };
 
 export default function RootLayout({

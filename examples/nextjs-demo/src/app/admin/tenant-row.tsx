@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 
 import { deleteTenantAction, updateTenantAction } from "@/app/admin/actions";
-import type { Tenant } from "@better-auth/tenancy";
+import type { Tenant } from "better-auth-tenancy";
 
 import { Button, ErrorAlert, Input, Textarea } from "@/components/ui";
 

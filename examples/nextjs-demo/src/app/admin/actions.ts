@@ -1,7 +1,7 @@
 // oxlint-disable typescript/no-base-to-string
 "use server";
 
-import type { Tenant } from "@better-auth/tenancy";
+import type { Tenant } from "better-auth-tenancy";
 import { revalidatePath } from "next/cache";
 
 import { adminHeaders } from "@/lib/admin";

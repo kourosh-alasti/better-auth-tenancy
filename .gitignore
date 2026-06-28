@@ -6,3 +6,5 @@ dist
 !.vscode/settings.json
 !.vscode/extensions.json
 .pnpm-store
+docs/.vitepress/cache
+docs/.vitepress/dist

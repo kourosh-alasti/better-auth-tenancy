@@ -1,6 +1,6 @@
-# Next.js Tenancy Demo
+# Next.js demo
 
-A minimal Next.js app demonstrating the full feature set of [`better-auth-tenancy`](../../).
+This repository includes a full Next.js demo at `examples/nextjs-demo` that demonstrates tenant management, email auth, per-tenant OAuth, and custom tenant resolution.
 
 ## Prerequisites
 
@@ -10,30 +10,30 @@ A minimal Next.js app demonstrating the full feature set of [`better-auth-tenanc
 
 ## Quick start
 
-From the **repository root**:
+From the repository root:
 
 ```bash
-# 1. Install dependencies
+# Install dependencies
 pnpm install
 
-# 2. Build the tenancy plugin
+# Build the tenancy plugin
 pnpm run build
 
-# 3. Configure environment
+# Configure environment
 cp examples/nextjs-demo/.env.example examples/nextjs-demo/.env
 
-# 4. Start PostgreSQL (port 5433 to avoid conflicts with local Postgres)
+# Start PostgreSQL (port 5433)
 cd examples/nextjs-demo && docker compose up -d
 
-# 5. Generate auth schema and push to database
+# Generate auth schema and push to database
 pnpm auth:schema
 export $(grep -v '^#' .env | xargs) && pnpm exec drizzle-kit push
 
-# 6. Start the dev server
+# Start the dev server
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open `http://localhost:3000` in your browser.
 
 ## Environment variables
 
@@ -51,31 +51,15 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ### Admin (`/admin`)
 
-Uses server actions with `x-admin-key: ADMIN_SECRET`:
-
-| Action        | Endpoint              |
-| ------------- | --------------------- |
-| Create tenant | `POST /tenant/create` |
-| List tenants  | `GET /tenant/list`    |
-| Update tenant | `POST /tenant/update` |
-| Delete tenant | `POST /tenant/delete` |
+Server actions use `x-admin-key: ADMIN_SECRET` for tenant CRUD and OAuth config management.
 
 ### Per-tenant OAuth (`/admin/tenants/[id]/oauth`)
 
-| Action                    | Endpoint                             |
-| ------------------------- | ------------------------------------ |
-| Register / upsert config  | `POST /tenant/oauth-config/register` |
-| List configs (no secrets) | `GET /tenant/oauth-config/list`      |
-| Delete config             | `POST /tenant/oauth-config/delete`   |
+Register, list, and delete OAuth credentials per tenant. Secrets are encrypted at rest.
 
 ### Tenant portal (`/t/[slug]`)
 
-| Page      | Endpoint                     |
-| --------- | ---------------------------- |
-| Landing   | `GET /tenant/get?slug=...`   |
-| Sign up   | `POST /tenant/sign-up/email` |
-| Sign in   | `POST /tenant/sign-in/email` |
-| Dashboard | Shows `session.tenantId`     |
+Each tenant gets a landing page, sign-up, sign-in, and dashboard showing `session.tenantId`.
 
 **Multi-tenant email demo:** Create `tenant-a` and `tenant-b`, sign up `shared@demo.com` on each with different passwords. Sign-in only works with the matching tenant password.
 
@@ -84,30 +68,16 @@ Uses server actions with `x-admin-key: ADMIN_SECRET`:
 ### OAuth sign-in
 
 1. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `NEXT_PUBLIC_GOOGLE_ENABLED=true`
-2. Register redirect URI in Google Cloud Console:
-   ```
-   http://localhost:3000/api/auth/tenant/callback/google
-   ```
-3. Optionally register per-tenant OAuth credentials in admin (overrides global config)
+2. Register redirect URI: `http://localhost:3000/api/auth/tenant/callback/google`
+3. Optionally register per-tenant OAuth credentials in admin
 4. Click "Sign in with Google" on `/t/[slug]/sign-in`
-5. Callback handled at `GET /tenant/callback/google`, redirects to `/welcome`
 
-Tenants **without** per-tenant OAuth config fall back to global `GOOGLE_CLIENT_*` env vars.
+Tenants without per-tenant OAuth config fall back to global `GOOGLE_CLIENT_*` env vars.
 
-## Scripts
-
-| Script             | Description                                |
-| ------------------ | ------------------------------------------ |
-| `pnpm dev`         | Start Next.js dev server                   |
-| `pnpm docker:up`   | Start PostgreSQL container                 |
-| `pnpm docker:down` | Stop PostgreSQL container                  |
-| `pnpm auth:schema` | Regenerate Drizzle schema from auth config |
-| `pnpm db:push`     | Push schema to database                    |
-
-## Project structure
+## Key files
 
 ```
-src/
+examples/nextjs-demo/src/
 ├── app/
 │   ├── admin/           # Tenant + OAuth management
 │   ├── api/auth/        # Better Auth handler
@@ -119,3 +89,24 @@ src/
     ├── auth-client.ts   # Client with tenantAuthClient
     └── db.ts            # Drizzle + Postgres
 ```
+
+## Auth configuration highlight
+
+The demo uses custom management authorization and slug-based tenant resolution:
+
+```ts
+tenantAuth({
+  canManageTenants: (ctx) => ctx.headers?.get("x-admin-key") === process.env.ADMIN_SECRET,
+  resolveTenantId: async (ctx) => {
+    const slug = ctx.headers?.get("x-tenant-slug");
+    if (!slug) return null;
+    const row = await db.query.tenant.findFirst({
+      where: eq(tenant.slug, slug),
+      columns: { id: true },
+    });
+    return row?.id ?? null;
+  },
+});
+```
+
+See the source in [`examples/nextjs-demo/src/lib/auth.ts`](https://github.com/kourosh-alasti/better-auth-tenancy/blob/main/examples/nextjs-demo/src/lib/auth.ts).

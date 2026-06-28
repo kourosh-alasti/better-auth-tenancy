@@ -1,4 +1,4 @@
-import { tenantAuthClient } from "@better-auth/tenancy/client";
+import { tenantAuthClient } from "better-auth-tenancy/client";
 import { createAuthClient } from "better-auth/react";
 
 export const authClient = createAuthClient({

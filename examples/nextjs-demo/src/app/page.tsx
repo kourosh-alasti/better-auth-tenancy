@@ -22,7 +22,7 @@ export default function HomePage() {
     <Container>
       <PageHeader
         title="Better Auth Tenancy Demo"
-        description="A Next.js app demonstrating every endpoint in @better-auth/tenancy with PostgreSQL."
+        description="A Next.js app demonstrating every endpoint in better-auth-tenancy with PostgreSQL."
       />
 
       <div className="mb-8 flex flex-wrap gap-3">

@@ -15,8 +15,8 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@better-auth/tenancy": "workspace:*",
     "better-auth": "^1.6.16",
+    "better-auth-tenancy": "workspace:*",
     "drizzle-orm": "^0.44.2",
     "next": "^15.3.4",
     "postgres": "^3.4.7",

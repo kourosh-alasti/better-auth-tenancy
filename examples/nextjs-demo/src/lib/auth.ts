@@ -1,4 +1,4 @@
-import { tenantAuth } from "@better-auth/tenancy";
+import { tenantAuth } from "better-auth-tenancy";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { eq } from "drizzle-orm";

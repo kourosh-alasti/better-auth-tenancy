@@ -1,12 +1,12 @@
 {
-  "name": "@better-auth/tenancy",
+  "name": "better-auth-tenancy",
   "version": "1.6.16",
   "description": "Multi-tenant authentication plugin for Better Auth",
   "license": "MIT",
   "author": "Kourosh Alasti <kourosh@alasti.company>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alasti-company/better-auth-tenancy.git"
+    "url": "git+https://github.com/kourosh-alasti/better-auth-tenancy.git"
   },
   "files": [
     "dist"
@@ -25,6 +25,9 @@
     "dev": "vp pack --watch",
     "test": "vp test",
     "check": "vp check",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
     "prepublishOnly": "vp run build",
     "prepare": "vp config"
   },
@@ -36,8 +39,10 @@
     "@types/node": "^25.6.2",
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "better-auth": "^1.6.16",
+    "oxc-minify": "^0.96.0",
     "typescript": "^6.0.3",
     "vite-plus": "catalog:",
+    "vitepress": "^2.0.0-alpha.17",
     "vitest": "catalog:"
   },
   "peerDependencies": {

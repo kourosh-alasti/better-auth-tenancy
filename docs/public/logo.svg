@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32" fill="none">
+  <rect x="0" y="4" width="24" height="24" rx="6" fill="#18181b"/>
+  <path d="M6 14h4v10H6V14zm6 0h4v10h-4V14z" fill="#fafafa"/>
+  <path d="M6 10h12v2H6v-2z" fill="#a1a1aa"/>
+  <text x="32" y="22" font-family="system-ui, sans-serif" font-size="14" font-weight="600" fill="#18181b">tenancy</text>
+</svg>
