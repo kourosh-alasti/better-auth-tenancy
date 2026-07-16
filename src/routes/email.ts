@@ -10,7 +10,13 @@ import { setSessionCookie } from "better-auth/cookies";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { TenantAuthOptions } from "./../types";
-import { assertTrustedRedirectURL, isUniqueConstraintError, requireTenant } from "./../utils";
+import {
+  assertTrustedRedirectURL,
+  assertTenantSignUpAllowed,
+  consumeTenantInvite,
+  isUniqueConstraintError,
+  requireTenant,
+} from "./../utils";
 
 const findTenantUserByEmail = async (
   ctx: GenericEndpointContext,
@@ -53,6 +59,12 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
             description: "If this is false, the session will not be remembered. Default is `true`.",
           })
           .optional(),
+        inviteToken: z
+          .string()
+          .meta({
+            description: "Invite token required when invite-only sign-up is enabled",
+          })
+          .optional(),
       }),
       use: [originCheck((ctx) => ctx.body?.callbackURL)],
       metadata: {
@@ -86,6 +98,13 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
       }
 
       const normalizedEmail = email.toLowerCase();
+      const pendingInvite = await assertTenantSignUpAllowed(
+        ctx,
+        options,
+        tenant,
+        normalizedEmail,
+        ctx.body.inviteToken,
+      );
       const existingUser = await findTenantUserByEmail(ctx, normalizedEmail, tenant.id);
       if (existingUser) {
         throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.USER_ALREADY_EXISTS);
@@ -109,6 +128,9 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
       }
       if (!createdUser) {
         throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
+      }
+      if (pendingInvite) {
+        await consumeTenantInvite(ctx, pendingInvite);
       }
       await ctx.context.internalAdapter.createAccount({
         userId: createdUser.id,

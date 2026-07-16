@@ -11,7 +11,9 @@ export const TENANT_AUTH_ERROR_CODES = defineErrorCodes({
   MEMBER_NOT_FOUND: "Tenant member not found",
   CANNOT_REMOVE_LAST_OWNER: "Cannot remove or demote the last owner of the tenant",
   PLATFORM_USER_NOT_FOUND: "Platform user not found",
+  PLATFORM_USER_AMBIGUOUS: "Multiple platform users share this email",
   PLATFORM_USER_REQUIRED: "Provide a platform user id or email",
+  OAUTH_CREDENTIAL_DECRYPT_FAILED: "Failed to decrypt stored OAuth credentials",
   USER_ALREADY_EXISTS: "A user with this email already exists for this tenant",
   INVALID_EMAIL_OR_PASSWORD: "Invalid email or password",
   EMAIL_NOT_VERIFIED: "Email is not verified",
@@ -27,4 +29,10 @@ export const TENANT_AUTH_ERROR_CODES = defineErrorCodes({
   INVALID_SLUG:
     "Slug must be 2-63 lowercase letters, digits, or hyphens, and cannot start or end with a hyphen",
   SLUG_RESERVED: "This slug is reserved",
+  INVITE_REQUIRED: "A valid invite is required to sign up for this tenant",
+  INVITE_INVALID: "Invite is invalid or does not match this sign-up",
+  INVITE_EXPIRED: "Invite has expired",
+  INVITE_NOT_FOUND: "Invite not found",
+  INVITE_ALREADY_EXISTS: "A pending invite already exists for this email",
+  EMAIL_DOMAIN_NOT_ALLOWED: "Email domain is not allowed for this tenant",
 });

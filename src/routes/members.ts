@@ -6,11 +6,15 @@ import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { Tenant, TenantAuthOptions, TenantMember, TenantRole } from "./../types";
 import {
   assertCanManageTenant,
+  assertNotLastOwner,
   findTenantMember,
   isTenantRole,
+  listWithPagination,
+  MAX_LIST_LIMIT,
   resolveManagementAccess,
   resolveTenantRole,
   roleAtLeast,
+  syncTenantOwnerId,
 } from "./../utils";
 
 const roleSchema = z.enum(["owner", "admin", "member"]);
@@ -39,11 +43,17 @@ async function findPlatformUser(
     });
   } else if (opts.email) {
     const email = opts.email.toLowerCase();
-    const candidates = await ctx.context.adapter.findMany<User & { tenantId?: string | null }>({
+    const platformUsers = await ctx.context.adapter.findMany<User & { tenantId?: string | null }>({
       model: "user",
-      where: [{ field: "email", value: email }],
+      where: [
+        { field: "email", value: email },
+        { field: "tenantId", value: null },
+      ],
     });
-    user = candidates.find((u: User & { tenantId?: string | null }) => !u.tenantId) ?? null;
+    if (platformUsers.length > 1) {
+      throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.PLATFORM_USER_AMBIGUOUS);
+    }
+    user = platformUsers[0] ?? null;
   }
 
   if (!user || user.tenantId) {
@@ -108,12 +118,8 @@ export const addTenantMember = (options?: TenantAuthOptions) =>
         },
       });
 
-      if (role === "owner" && !tenant.ownerId) {
-        await ctx.context.adapter.update<Tenant>({
-          model: "tenant",
-          where: [{ field: "id", value: tenant.id }],
-          update: { ownerId: target.id, updatedAt: new Date() },
-        });
+      if (role === "owner") {
+        await syncTenantOwnerId(ctx, tenant.id);
       }
 
       return ctx.json(member);
@@ -128,6 +134,19 @@ export const listTenantMembers = (options?: TenantAuthOptions) =>
       operationId: "listTenantMembers",
       query: z.object({
         tenantId: z.string().meta({ description: "The id of the tenant" }),
+        limit: z.coerce
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_LIST_LIMIT)
+          .meta({ description: "Maximum number of members to return" })
+          .optional(),
+        offset: z.coerce
+          .number()
+          .int()
+          .min(0)
+          .meta({ description: "Number of members to skip" })
+          .optional(),
       }),
       metadata: {
         openapi: {
@@ -140,11 +159,15 @@ export const listTenantMembers = (options?: TenantAuthOptions) =>
       const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenantById(ctx, ctx.query.tenantId);
       await assertCanManageTenant(ctx, access, tenant, "member");
-      const members = await ctx.context.adapter.findMany<TenantMember>({
-        model: "tenantMember",
-        where: [{ field: "tenantId", value: tenant.id }],
-      });
-      return ctx.json(members);
+      return ctx.json(
+        await listWithPagination<TenantMember>(ctx, {
+          model: "tenantMember",
+          where: [{ field: "tenantId", value: tenant.id }],
+          sortBy: { field: "createdAt", direction: "asc" },
+          limit: ctx.query.limit,
+          offset: ctx.query.offset,
+        }),
+      );
     },
   );
 
@@ -177,16 +200,7 @@ export const updateTenantMember = (options?: TenantAuthOptions) =>
       }
 
       if (member.role === "owner" && ctx.body.role !== "owner") {
-        const owners = await ctx.context.adapter.findMany<TenantMember>({
-          model: "tenantMember",
-          where: [
-            { field: "tenantId", value: tenant.id },
-            { field: "role", value: "owner" },
-          ],
-        });
-        if (owners.length <= 1) {
-          throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.CANNOT_REMOVE_LAST_OWNER);
-        }
+        await assertNotLastOwner(ctx, tenant.id);
       }
 
       const updated = await ctx.context.adapter.update<TenantMember>({
@@ -195,28 +209,8 @@ export const updateTenantMember = (options?: TenantAuthOptions) =>
         update: { role: ctx.body.role },
       });
 
-      if (ctx.body.role === "owner") {
-        await ctx.context.adapter.update<Tenant>({
-          model: "tenant",
-          where: [{ field: "id", value: tenant.id }],
-          update: { ownerId: ctx.body.userId, updatedAt: new Date() },
-        });
-      } else if (tenant.ownerId === ctx.body.userId) {
-        const remainingOwner = await ctx.context.adapter.findOne<TenantMember>({
-          model: "tenantMember",
-          where: [
-            { field: "tenantId", value: tenant.id },
-            { field: "role", value: "owner" },
-          ],
-        });
-        await ctx.context.adapter.update<Tenant>({
-          model: "tenant",
-          where: [{ field: "id", value: tenant.id }],
-          update: {
-            ownerId: remainingOwner?.userId ?? null,
-            updatedAt: new Date(),
-          },
-        });
+      if (member.role === "owner" || ctx.body.role === "owner") {
+        await syncTenantOwnerId(ctx, tenant.id);
       }
 
       return ctx.json(updated ?? { ...member, role: ctx.body.role });
@@ -258,16 +252,7 @@ export const removeTenantMember = (options?: TenantAuthOptions) =>
       }
 
       if (member.role === "owner") {
-        const owners = await ctx.context.adapter.findMany<TenantMember>({
-          model: "tenantMember",
-          where: [
-            { field: "tenantId", value: tenant.id },
-            { field: "role", value: "owner" },
-          ],
-        });
-        if (owners.length <= 1) {
-          throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.CANNOT_REMOVE_LAST_OWNER);
-        }
+        await assertNotLastOwner(ctx, tenant.id);
       }
 
       await ctx.context.adapter.delete({
@@ -275,22 +260,8 @@ export const removeTenantMember = (options?: TenantAuthOptions) =>
         where: [{ field: "id", value: member.id }],
       });
 
-      if (tenant.ownerId === ctx.body.userId) {
-        const remainingOwner = await ctx.context.adapter.findOne<TenantMember>({
-          model: "tenantMember",
-          where: [
-            { field: "tenantId", value: tenant.id },
-            { field: "role", value: "owner" },
-          ],
-        });
-        await ctx.context.adapter.update<Tenant>({
-          model: "tenant",
-          where: [{ field: "id", value: tenant.id }],
-          update: {
-            ownerId: remainingOwner?.userId ?? null,
-            updatedAt: new Date(),
-          },
-        });
+      if (member.role === "owner") {
+        await syncTenantOwnerId(ctx, tenant.id);
       }
 
       return ctx.json({ success: true });

@@ -9,6 +9,7 @@ import {
   removeTenantMember,
   updateTenantMember,
 } from "./routes/members";
+import { createTenantInvite, listTenantInvites, revokeTenantInvite } from "./routes/invites";
 import {
   callbackTenantOAuth,
   deleteTenantOAuthConfig,
@@ -22,6 +23,7 @@ import { getSchema } from "./schema";
 import type {
   Tenant,
   TenantAuthOptions,
+  TenantInvite,
   TenantMember,
   TenantOAuthConfig,
   TenantRole,
@@ -46,6 +48,9 @@ const TENANT_MANAGEMENT_PATHS = new Set<string>([
   "/tenant/member/list",
   "/tenant/member/update",
   "/tenant/member/remove",
+  "/tenant/invite/create",
+  "/tenant/invite/list",
+  "/tenant/invite/revoke",
   "/tenant/oauth-config/register",
   "/tenant/oauth-config/list",
   "/tenant/oauth-config/delete",
@@ -100,6 +105,9 @@ export const tenantAuth = (options?: TenantAuthOptions) => {
       listTenantMembers: listTenantMembers(options),
       updateTenantMember: updateTenantMember(options),
       removeTenantMember: removeTenantMember(options),
+      createTenantInvite: createTenantInvite(options),
+      listTenantInvites: listTenantInvites(options),
+      revokeTenantInvite: revokeTenantInvite(options),
       signUpEmailTenant: signUpEmailTenant(options),
       signInEmailTenant: signInEmailTenant(options),
       verifyEmailTenant: verifyEmailTenant(options),
@@ -139,4 +147,11 @@ export const tenantAuth = (options?: TenantAuthOptions) => {
   };
 };
 
-export type { Tenant, TenantAuthOptions, TenantMember, TenantOAuthConfig, TenantRole };
+export type {
+  Tenant,
+  TenantAuthOptions,
+  TenantInvite,
+  TenantMember,
+  TenantOAuthConfig,
+  TenantRole,
+};

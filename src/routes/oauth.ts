@@ -2,7 +2,7 @@ import type { GenericEndpointContext } from "@better-auth/core";
 import type { OAuth2Tokens } from "@better-auth/core/oauth2";
 import type { Account, User } from "better-auth";
 import { generateState, parseState } from "better-auth";
-import { APIError, createAuthEndpoint, originCheck } from "better-auth/api";
+import { APIError, createAuthEndpoint, isAPIError, originCheck } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import { setTokenUtil } from "better-auth/oauth2";
 import * as z from "zod";
@@ -23,11 +23,15 @@ import {
  * Shapes a config for API responses: drops the client secret entirely
  * and decrypts the client id so admins can identify the configuration.
  */
-const toConfigOutput = async (ctx: GenericEndpointContext, config: TenantOAuthConfig) => {
+const toConfigOutput = async (
+  ctx: GenericEndpointContext,
+  config: TenantOAuthConfig,
+  options?: TenantAuthOptions,
+) => {
   const { clientSecret: _clientSecret, ...rest } = config;
   return {
     ...rest,
-    clientId: await decryptCredential(ctx, config.clientId),
+    clientId: await decryptCredential(ctx, config.clientId, options),
   };
 };
 
@@ -100,7 +104,7 @@ export const registerTenantOAuthConfig = (options?: TenantAuthOptions) =>
           where: [{ field: "id", value: existing.id }],
           update: data,
         });
-        return ctx.json(await toConfigOutput(ctx, updated ?? { ...existing, ...data }));
+        return ctx.json(await toConfigOutput(ctx, updated ?? { ...existing, ...data }, options));
       }
       const created = await ctx.context.adapter.create<
         Omit<TenantOAuthConfig, "id">,
@@ -114,7 +118,7 @@ export const registerTenantOAuthConfig = (options?: TenantAuthOptions) =>
           createdAt: new Date(),
         },
       });
-      return ctx.json(await toConfigOutput(ctx, created));
+      return ctx.json(await toConfigOutput(ctx, created, options));
     },
   );
 
@@ -142,7 +146,9 @@ export const listTenantOAuthConfigs = (options?: TenantAuthOptions) =>
         model: "tenantOauthConfig",
         where: [{ field: "tenantId", value: tenant.id }],
       });
-      return ctx.json(await Promise.all(configs.map((config) => toConfigOutput(ctx, config))));
+      return ctx.json(
+        await Promise.all(configs.map((config) => toConfigOutput(ctx, config, options))),
+      );
     },
   );
 
@@ -249,6 +255,7 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
         ctx,
         tenant.id,
         ctx.body.provider,
+        options,
       );
       const { codeVerifier, state } = await generateState(ctx, undefined, {
         tenantId: tenant.id,
@@ -278,7 +285,7 @@ const callbackQuerySchema = z.object({
   state: z.string().optional(),
 });
 
-export const callbackTenantOAuth = (_options?: TenantAuthOptions) =>
+export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
   createAuthEndpoint(
     "/tenant/callback/:providerId",
     {
@@ -334,11 +341,14 @@ export const callbackTenantOAuth = (_options?: TenantAuthOptions) =>
       let provider: Awaited<ReturnType<typeof resolveTenantProvider>>["provider"];
       let redirectURI: string;
       try {
-        const resolved = await resolveTenantProvider(ctx, tenantId, providerId);
+        const resolved = await resolveTenantProvider(ctx, tenantId, providerId, options);
         provider = resolved.provider;
         redirectURI = resolved.redirectURI;
       } catch (e) {
         ctx.context.logger.error("Unable to resolve tenant provider", e);
+        if (isAPIError(e) && e.body?.code === "OAUTH_CREDENTIAL_DECRYPT_FAILED") {
+          redirectOnError(ctx, resolvedErrorURL, "oauth_credential_decrypt_failed");
+        }
         redirectOnError(ctx, resolvedErrorURL, "oauth_provider_not_found");
       }
 

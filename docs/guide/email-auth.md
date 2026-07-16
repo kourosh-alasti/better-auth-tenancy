@@ -20,6 +20,20 @@ Endpoint: `POST /tenant/sign-up/email`
 
 The user is created with `tenantId` set and an email/password account linked to that tenant. If email verification is enabled, a verification email is sent using your configured `sendVerificationEmail` handler.
 
+When `requireInviteForTenantSignUp` is enabled, pass the invite token from an admin-created invite:
+
+```ts
+await authClient.signUpEmailTenant({
+  tenantId: "<tenant-id>",
+  email: "user@example.com",
+  password: "secure-password",
+  name: "Jane Doe",
+  inviteToken: "<invite-token>",
+});
+```
+
+See [Configuration](/guide/configuration#requireinvitefortenantsignup) for invite-only and domain allowlist policies.
+
 ## Sign in
 
 ```ts
@@ -90,5 +104,9 @@ console.log(session?.tenantId);
 | `TENANT_NOT_FOUND`           | Invalid or missing tenant id             |
 | `INVALID_CALLBACK_URL`       | `callbackURL` isn't a trusted origin     |
 | `INVALID_VERIFICATION_TOKEN` | Token missing/wrong tenant claim         |
+| `INVITE_REQUIRED`            | Sign-up requires a valid invite token    |
+| `INVITE_INVALID`             | Invite token invalid or already used     |
+| `INVITE_EXPIRED`             | Invite token has expired                 |
+| `EMAIL_DOMAIN_NOT_ALLOWED`   | Email domain not on the allowlist        |
 
 See [Error codes](/api/error-codes) for the full list.

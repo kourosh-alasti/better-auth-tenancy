@@ -6,9 +6,12 @@
 
 - A **`tenant` table** (with `ownerId`) and CRUD endpoints for tenant management
 - **`tenantMember`** roles (`owner` / `admin` / `member`) for platform collaborators
+- **`tenantInvite`** for invite-only tenant email sign-up
 - A **`tenantId` column** on `user`, `session`, `account`, and `verification`
 - **Platform vs tenant auth** — core routes for platform users on `app.com`; `/tenant/*` for tenant end-users
 - **Tenant-scoped sign-up and sign-in** so the same email can exist under different tenants
+- **`GET /tenant/verify-email`** for tenant-scoped email verification (not interchangeable with core `/verify-email`)
+- **Sign-up policies** — optional invite-only sign-up and email-domain allowlists
 - **Per-tenant OAuth configuration** stored in the database, with fallback to global social providers
 
 ## Minimal setup

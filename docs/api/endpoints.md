@@ -45,7 +45,14 @@ Get a tenant by id or slug. This endpoint is public, but the response depends on
 
 List tenants the caller can access (all for global admin; memberships for platform users).
 
-**Response:** Array of tenant objects
+**Query**
+
+| Field    | Type     | Required | Description                           |
+| -------- | -------- | -------- | ------------------------------------- |
+| `limit`  | `number` | no       | Max items to return (1–100)           |
+| `offset` | `number` | no       | Number of items to skip (default `0`) |
+
+**Response:** Array of tenant objects when `limit` and `offset` are omitted. When either is provided, returns `{ data, total, nextOffset? }`.
 
 ---
 
@@ -60,7 +67,7 @@ Update a tenant. Requires `admin` role or higher (or global admin).
 | `id`   | `string` | yes      | Tenant to update |
 | `data` | `object` | yes      | Fields to update |
 
-`data` may include `name`, `slug`, and `metadata`.
+`data` may include `name`, `slug`, and `metadata`. Pass `metadata: null` to clear metadata; omit the field to leave it unchanged.
 
 **Response:** Updated tenant object
 
@@ -101,9 +108,15 @@ Add a platform user as a member. Requires `admin` or higher. Admins may only ass
 
 List members. Requires `member` role or higher.
 
-**Query:** `tenantId`
+**Query**
 
-**Response:** Array of TenantMember objects
+| Field      | Type     | Required | Description                           |
+| ---------- | -------- | -------- | ------------------------------------- |
+| `tenantId` | `string` | yes      | Tenant                                |
+| `limit`    | `number` | no       | Max items to return (1–100)           |
+| `offset`   | `number` | no       | Number of items to skip (default `0`) |
+
+**Response:** Array of TenantMember objects when `limit` and `offset` are omitted. When either is provided, returns `{ data, total, nextOffset? }`.
 
 ---
 
@@ -125,6 +138,49 @@ Remove a member. Requires `admin` or higher. Admins cannot remove owners/admins.
 
 **Response:** `{ success: true }`
 
+## Invites
+
+Manage invites for tenant end-user email sign-up. Requires `admin` role or higher (or global admin). When `requireInviteForTenantSignUp` is enabled, sign-up must include a matching `inviteToken`.
+
+### `POST /tenant/invite/create`
+
+Create an invite for a tenant end-user.
+
+**Body**
+
+| Field       | Type     | Required | Description                          |
+| ----------- | -------- | -------- | ------------------------------------ |
+| `tenantId`  | `string` | yes      | Tenant                               |
+| `email`     | `string` | yes      | Email address to invite              |
+| `expiresIn` | `number` | no       | Lifetime in seconds (default 7 days) |
+
+**Response:** TenantInvite object (includes `token` for the sign-up link)
+
+---
+
+### `GET /tenant/invite/list`
+
+List invites for a tenant. By default returns only pending (unconsumed, unrevoked, unexpired) invites.
+
+**Query**
+
+| Field             | Type      | Required | Description                          |
+| ----------------- | --------- | -------- | ------------------------------------ |
+| `tenantId`        | `string`  | yes      | Tenant                               |
+| `includeConsumed` | `boolean` | no       | Include consumed and revoked invites |
+
+**Response:** Array of TenantInvite objects
+
+---
+
+### `POST /tenant/invite/revoke`
+
+Revoke a pending invite.
+
+**Body:** `tenantId`, `inviteId`
+
+**Response:** TenantInvite object
+
 ## Email auth
 
 ### `POST /tenant/sign-up/email`
@@ -142,6 +198,9 @@ Sign up a user under a tenant.
 | `image`       | `string`  | no       | Profile image URL               |
 | `callbackURL` | `string`  | no       | Email verification callback     |
 | `rememberMe`  | `boolean` | no       | Remember session (default true) |
+| `inviteToken` | `string`  | no\*     | Invite token from an admin      |
+
+\*Required when `requireInviteForTenantSignUp` is enabled.
 
 \*Required unless resolved via header or `resolveTenantId`.
 

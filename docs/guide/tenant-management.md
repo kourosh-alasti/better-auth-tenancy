@@ -46,7 +46,11 @@ await auth.api.addTenantMember({
   body: { tenantId: tenant.id, email: "partner@platform.com", role: "admin" },
   headers,
 });
+```
 
+When adding by email, the plugin resolves platform users (`tenantId` null) deterministically. If multiple platform users share the same email, the request fails with `PLATFORM_USER_AMBIGUOUS`. Add a partial unique index on `user.email` where `tenantId` is null in your database to prevent duplicates — see [Schema](/api/schema#user).
+
+```ts
 await auth.api.listTenantMembers({
   query: { tenantId: tenant.id },
   headers,
@@ -68,8 +72,8 @@ The last `owner` cannot be removed or demoted.
 ## Get / list / update / delete
 
 - **Get** by id or slug is public, but unauthorized callers receive only `id`, `name`, `slug`, and `createdAt` — `ownerId` and `metadata` are only returned to tenant members and global admins (see [`exposeTenantDetailsPublicly`](/guide/configuration#exposetenantdetailspublicly)).
-- **List** returns all tenants for global admin; otherwise tenants the caller is a member of.
-- **Update** requires `admin` or higher.
+- **List** returns all tenants for global admin; otherwise tenants the caller is a member of. Pass `limit` and/or `offset` for paginated results (`{ data, total, nextOffset? }`); omit both for a plain array.
+- **Update** requires `admin` or higher. Pass `metadata: null` to clear metadata.
 - **Delete** requires `owner` (or global admin). Cascades related users, sessions, accounts, members, and OAuth configs.
 
 ```ts

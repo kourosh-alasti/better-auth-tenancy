@@ -99,6 +99,57 @@ export const getSchema = (options?: TenantAuthOptions) => {
         },
       },
     },
+    tenantInvite: {
+      fields: {
+        tenantId: {
+          type: "string",
+          required: true,
+          index: true,
+          references: {
+            model: options?.schema?.tenant?.modelName || "tenant",
+            field: "id",
+            onDelete: "cascade",
+          },
+        },
+        email: {
+          type: "string",
+          required: true,
+          index: true,
+        },
+        token: {
+          type: "string",
+          required: true,
+          unique: true,
+        },
+        invitedBy: {
+          type: "string",
+          required: false,
+          index: true,
+          references: {
+            model: "user",
+            field: "id",
+            onDelete: "set null",
+          },
+        },
+        expiresAt: {
+          type: "date",
+          required: true,
+        },
+        consumedAt: {
+          type: "date",
+          required: false,
+        },
+        revokedAt: {
+          type: "date",
+          required: false,
+        },
+        createdAt: {
+          type: "date",
+          required: true,
+          defaultValue: () => new Date(),
+        },
+      },
+    },
     tenantOauthConfig: {
       fields: {
         tenantId: {

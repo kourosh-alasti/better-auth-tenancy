@@ -25,6 +25,13 @@ The client plugin tells Better Auth which HTTP methods to use for each endpoint:
 | `/tenant/list`                  | GET    |
 | `/tenant/update`                | POST   |
 | `/tenant/delete`                | POST   |
+| `/tenant/member/add`            | POST   |
+| `/tenant/member/list`           | GET    |
+| `/tenant/member/update`         | POST   |
+| `/tenant/member/remove`         | POST   |
+| `/tenant/invite/create`         | POST   |
+| `/tenant/invite/list`           | GET    |
+| `/tenant/invite/revoke`         | POST   |
 | `/tenant/sign-up/email`         | POST   |
 | `/tenant/sign-in/email`         | POST   |
 | `/tenant/verify-email`          | GET    |
