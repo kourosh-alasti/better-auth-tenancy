@@ -6,6 +6,7 @@ export const TENANT_AUTH_ERROR_CODES = defineErrorCodes({
   TENANT_ALREADY_EXISTS: "A tenant with this slug already exists",
   TENANT_MANAGEMENT_NOT_ALLOWED:
     "You are not allowed to manage tenants or tenant OAuth configurations",
+  TENANT_NOT_OWNED: "You do not own this tenant",
   USER_ALREADY_EXISTS: "A user with this email already exists for this tenant",
   INVALID_EMAIL_OR_PASSWORD: "Invalid email or password",
   EMAIL_NOT_VERIFIED: "Email is not verified",

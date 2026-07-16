@@ -28,6 +28,17 @@ export const getSchema = (options?: TenantAuthOptions) => {
           unique: true,
           sortable: true,
         },
+        ownerId: {
+          type: "string",
+          required: false,
+          index: true,
+          input: false,
+          references: {
+            model: "user",
+            field: "id",
+            onDelete: "set null",
+          },
+        },
         metadata: {
           type: "string",
           required: false,

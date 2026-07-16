@@ -16,6 +16,12 @@ export interface Tenant {
    */
   slug: string;
   /**
+   * Platform user who owns this tenant. Set on create from the
+   * authenticated session. `null` when created by a global admin
+   * without a session (e.g. API key).
+   */
+  ownerId?: string | null | undefined;
+  /**
    * Arbitrary JSON-serialized metadata.
    */
   metadata?: string | null | undefined;
@@ -81,11 +87,15 @@ export interface TenantAuthOptions {
    */
   keepEmailGloballyUnique?: boolean | undefined;
   /**
-   * Authorize tenant and OAuth-config management requests
-   * (create/update/delete tenants and OAuth configs).
+   * Global admin bypass for tenant and OAuth-config management.
    *
-   * When provided, this fully replaces the default check (which
-   * requires an authenticated session). Return `false` to deny.
+   * When this returns `true`, the caller can manage every tenant
+   * (create/list/update/delete and OAuth configs). When it returns
+   * `false` or is omitted, access falls through to ownership: a
+   * platform session (`user.tenantId` null) may create tenants and
+   * manage only those it owns.
+   *
+   * Use for operator API keys / super-admin checks.
    */
   canManageTenants?: ((ctx: GenericEndpointContext) => Awaitable<boolean>) | undefined;
   /**

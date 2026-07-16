@@ -2,7 +2,7 @@ import { APIError, createAuthEndpoint } from "better-auth/api";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { Tenant, TenantAuthOptions } from "./../types";
-import { requireManagementAccess } from "./../utils";
+import { assertCanManageTenant, resolveManagementAccess } from "./../utils";
 
 export const createTenant = (options?: TenantAuthOptions) =>
   createAuthEndpoint(
@@ -32,7 +32,7 @@ export const createTenant = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const existing = await ctx.context.adapter.findOne<Tenant>({
         model: "tenant",
         where: [{ field: "slug", value: ctx.body.slug }],
@@ -45,6 +45,7 @@ export const createTenant = (options?: TenantAuthOptions) =>
         data: {
           name: ctx.body.name,
           slug: ctx.body.slug,
+          ownerId: access.userId,
           metadata: ctx.body.metadata ? JSON.stringify(ctx.body.metadata) : null,
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -96,14 +97,15 @@ export const listTenants = (options?: TenantAuthOptions) =>
       metadata: {
         openapi: {
           operationId: "listTenants",
-          description: "List all tenants",
+          description: "List tenants the caller can manage",
         },
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenants = await ctx.context.adapter.findMany<Tenant>({
         model: "tenant",
+        ...(access.kind === "owner" ? { where: [{ field: "ownerId", value: access.userId }] } : {}),
       });
       return ctx.json(tenants);
     },
@@ -131,7 +133,7 @@ export const updateTenant = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await ctx.context.adapter.findOne<Tenant>({
         model: "tenant",
         where: [{ field: "id", value: ctx.body.id }],
@@ -139,6 +141,7 @@ export const updateTenant = (options?: TenantAuthOptions) =>
       if (!tenant) {
         throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.TENANT_NOT_FOUND);
       }
+      assertCanManageTenant(access, tenant);
       if (ctx.body.data.slug && ctx.body.data.slug !== tenant.slug) {
         const existing = await ctx.context.adapter.findOne<Tenant>({
           model: "tenant",
@@ -182,7 +185,7 @@ export const deleteTenant = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await ctx.context.adapter.findOne<Tenant>({
         model: "tenant",
         where: [{ field: "id", value: ctx.body.id }],
@@ -190,6 +193,7 @@ export const deleteTenant = (options?: TenantAuthOptions) =>
       if (!tenant) {
         throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.TENANT_NOT_FOUND);
       }
+      assertCanManageTenant(access, tenant);
       await ctx.context.adapter.delete({
         model: "tenant",
         where: [{ field: "id", value: ctx.body.id }],

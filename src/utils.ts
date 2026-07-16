@@ -86,27 +86,60 @@ export async function requireTenant(
 }
 
 /**
- * Guards tenant/OAuth-config management endpoints. Uses the
- * `canManageTenants` callback when provided, otherwise requires an
- * authenticated session.
+ * Result of resolving who may manage tenants.
+ *
+ * - `global` — `canManageTenants` returned true (operator / API key)
+ * - `owner` — authenticated platform user; may only manage owned tenants
  */
-export async function requireManagementAccess(
+export type ManagementAccess =
+  | { kind: "global"; userId: string | null }
+  | { kind: "owner"; userId: string };
+
+type SessionUser = { id: string; tenantId?: string | null | undefined };
+
+/**
+ * Resolves management access for tenant/OAuth-config endpoints.
+ *
+ * Order:
+ * 1. `canManageTenants` returning true → global access
+ * 2. Authenticated platform user (`user.tenantId` null) → owner access
+ * 3. Otherwise deny (no “any session is admin” fallback)
+ */
+export async function resolveManagementAccess(
   ctx: GenericEndpointContext,
   options?: TenantAuthOptions,
-): Promise<void> {
+): Promise<ManagementAccess> {
+  const session = await getSessionFromCtx(ctx);
+  const user = session?.user as SessionUser | undefined;
+
   if (options?.canManageTenants) {
     const allowed = await options.canManageTenants(ctx);
-    if (!allowed) {
-      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
+    if (allowed) {
+      return { kind: "global", userId: user?.id ?? null };
     }
-
-    return;
   }
 
-  const session = await getSessionFromCtx(ctx);
-  if (!session) {
+  if (!user) {
     throw APIError.from("UNAUTHORIZED", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
   }
+
+  // Tenant end-users authenticate under a tenant; only platform users
+  // (null tenantId) may own or manage tenants.
+  if (user.tenantId) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
+  }
+
+  return { kind: "owner", userId: user.id };
+}
+
+/**
+ * Ensures the caller may manage a specific tenant. Global access always
+ * passes; owner access requires `tenant.ownerId === access.userId`.
+ */
+export function assertCanManageTenant(access: ManagementAccess, tenant: Tenant): void {
+  if (access.kind === "global") return;
+  if (tenant.ownerId && tenant.ownerId === access.userId) return;
+  throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_NOT_OWNED);
 }
 
 export async function findTenantOAuthConfig(

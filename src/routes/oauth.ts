@@ -9,11 +9,12 @@ import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { TenantAuthOptions, TenantOAuthConfig } from "./../types";
 import {
+  assertCanManageTenant,
   decryptCredential,
   encryptCredential,
   findTenantOAuthConfig,
-  requireManagementAccess,
   requireTenant,
+  resolveManagementAccess,
   resolveTenantProvider,
 } from "./../utils";
 
@@ -79,8 +80,9 @@ export const registerTenantOAuthConfig = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      assertCanManageTenant(access, tenant);
       const existing = await findTenantOAuthConfig(ctx, tenant.id, ctx.body.providerId);
       // Credentials are encrypted at rest with the auth secret.
       const data = {
@@ -132,8 +134,9 @@ export const listTenantOAuthConfigs = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      assertCanManageTenant(access, tenant);
       const configs = await ctx.context.adapter.findMany<TenantOAuthConfig>({
         model: "tenantOauthConfig",
         where: [{ field: "tenantId", value: tenant.id }],
@@ -160,8 +163,9 @@ export const deleteTenantOAuthConfig = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      assertCanManageTenant(access, tenant);
       const existing = await findTenantOAuthConfig(ctx, tenant.id, ctx.body.providerId);
       if (!existing) {
         throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.OAUTH_CONFIG_NOT_FOUND);
