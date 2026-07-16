@@ -9,10 +9,12 @@
  *   DATABASE_URL=postgres://user:password@localhost:5432/better_auth
  *   TEST_POSTGRES=1
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { parseSetCookieHeader } from "better-auth/cookies";
-import { pushSchema } from "drizzle-kit/api";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -24,15 +26,18 @@ const runPostgres = process.env.TEST_POSTGRES === "1";
 const connectionString =
   process.env.DATABASE_URL ?? "postgres://user:password@localhost:5432/better_auth";
 
+const schemaSql = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "pg/schema.sql"),
+  "utf8",
+);
+
 describe.runIf(runPostgres)("postgres integration", async () => {
   const client = postgres(connectionString, { max: 1 });
   const db = drizzle(client, { schema });
 
   // Dedicated CI database — reset so indexes/tables match this schema.
   await client.unsafe(`DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`);
-
-  const { apply } = await pushSchema(schema, db as never);
-  await apply();
+  await client.unsafe(schemaSql);
 
   const auth = betterAuth({
     baseURL: "http://localhost:3000",
