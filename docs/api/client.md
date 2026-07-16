@@ -27,6 +27,7 @@ The client plugin tells Better Auth which HTTP methods to use for each endpoint:
 | `/tenant/delete`                | POST   |
 | `/tenant/sign-up/email`         | POST   |
 | `/tenant/sign-in/email`         | POST   |
+| `/tenant/verify-email`          | GET    |
 | `/tenant/sign-in/social`        | POST   |
 | `/tenant/oauth-config/register` | POST   |
 | `/tenant/oauth-config/list`     | GET    |

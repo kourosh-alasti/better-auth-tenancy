@@ -184,12 +184,13 @@ export const getSchema = (options?: TenantAuthOptions) => {
     },
     verification: {
       fields: {
-        tenantId: {
-          type: "string",
-          required: false,
-          input: false,
-          index: true,
-        },
+        // Not written to when a token is issued for the tenant sign-up /
+        // sign-in flow: those tokens are JWTs (see `createEmailVerificationToken`)
+        // carrying a `tenantId` claim, verified by `/tenant/verify-email`
+        // without ever touching the `verification` table. This column
+        // stays available for adapters that persist verification rows
+        // through other flows (e.g. a custom `sendVerificationEmail`).
+        tenantId: tenantIdReference(options),
       },
     },
   } satisfies BetterAuthPluginDBSchema;

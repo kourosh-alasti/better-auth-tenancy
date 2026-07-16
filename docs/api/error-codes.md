@@ -32,6 +32,8 @@ import { TENANT_AUTH_ERROR_CODES } from "better-auth-tenancy/client";
 | `FAILED_TO_CREATE_USER`         | Failed to create user                                                       |
 | `FAILED_TO_CREATE_SESSION`      | Failed to create session                                                    |
 | `INVALID_CALLBACK_URL`          | Invalid callbackURL                                                         |
+| `INVALID_VERIFICATION_TOKEN`    | Invalid or unsupported verification token                                   |
+| `SESSION_TENANT_MISMATCH`       | This session cannot be used for this tenant or host                         |
 
 ## Usage
 

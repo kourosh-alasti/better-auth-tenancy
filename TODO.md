@@ -16,4 +16,11 @@
 
 [] Invites / domain join policies for tenant end-users
 
-[] Session host binding (platform ↔ tenant cookie isolation)
+[x] Session host binding (platform ↔ tenant cookie isolation)
+
+- `hooks.before` enforces the session's tenant id matches the request's
+  resolved tenant (or that platform requests carry no tenant session)
+- `isPlatformRequest` / `enforceSessionTenant` options; `SESSION_TENANT_MISMATCH`
+- tenant management endpoints (create/update/delete/members/OAuth config)
+  are intentionally excluded — they manage a target tenant, not the
+  caller's own context

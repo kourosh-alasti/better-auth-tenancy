@@ -118,6 +118,35 @@ export interface TenantAuthOptions {
    */
   canManageTenants?: ((ctx: GenericEndpointContext) => Awaitable<boolean>) | undefined;
   /**
+   * Identifies platform-host requests (e.g. by comparing the request
+   * host against your platform domain). Used by the session ↔ request
+   * tenant-binding check: when this returns `true`, a session carrying
+   * a tenant id is rejected, since tenant sessions must not be usable
+   * on the platform host.
+   *
+   * Omit this if you don't need platform-host enforcement — tenant
+   * mismatch enforcement (see `enforceSessionTenant`) still applies.
+   */
+  isPlatformRequest?: ((ctx: GenericEndpointContext) => Awaitable<boolean>) | undefined;
+  /**
+   * Enforces that an existing session matches the tenant (or platform)
+   * context of the request it's used with:
+   *
+   * 1. If a tenant can be resolved for the request, the session's
+   *    tenant id (`session.tenantId`, falling back to `user.tenantId`)
+   *    must equal it.
+   * 2. If `isPlatformRequest` resolves to `true`, the session must not
+   *    carry a tenant id.
+   * 3. If neither can be determined, nothing is enforced.
+   *
+   * Mismatches are rejected with `SESSION_TENANT_MISMATCH`. This
+   * prevents a session issued under one tenant host (or the platform
+   * host) from being replayed against another.
+   *
+   * @default true
+   */
+  enforceSessionTenant?: boolean | undefined;
+  /**
    * Custom schema for the plugin (rename models/fields).
    */
   schema?: BetterAuthPluginDBSchema | undefined;

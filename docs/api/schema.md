@@ -89,9 +89,11 @@ Adds:
 
 Adds:
 
-| Field      | Type     | Notes   |
-| ---------- | -------- | ------- |
-| `tenantId` | `string` | Indexed |
+| Field      | Type     | Notes                                     |
+| ---------- | -------- | ----------------------------------------- |
+| `tenantId` | `string` | FK → `tenant.id`, cascade delete, indexed |
+
+Tenant sign-up / sign-in verification tokens are JWTs carrying the tenant id as a claim (see [Email auth](/guide/email-auth#email-verification)) and are verified via `GET /tenant/verify-email` without ever writing to this table. `verification.tenantId` remains available for adapters/flows that do persist verification rows (e.g. a custom `sendVerificationEmail` that stores its own record).
 
 ## Custom schema
 

@@ -19,6 +19,7 @@ export const tenantAuthClient = () => {
       "/tenant/member/remove": "POST",
       "/tenant/sign-up/email": "POST",
       "/tenant/sign-in/email": "POST",
+      "/tenant/verify-email": "GET",
       "/tenant/sign-in/social": "POST",
       "/tenant/oauth-config/register": "POST",
       "/tenant/oauth-config/list": "GET",

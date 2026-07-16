@@ -161,6 +161,21 @@ Sign in a user under a tenant.
 
 **Response:** User and session
 
+---
+
+### `GET /tenant/verify-email`
+
+Verify a tenant-scoped user's email from the link sent by `signUpEmailTenant` / `signInEmailTenant`. Not interchangeable with core's `GET /verify-email` — see [Email auth](/guide/email-auth#email-verification).
+
+**Query**
+
+| Field         | Type     | Required | Description                           |
+| ------------- | -------- | -------- | ------------------------------------- |
+| `token`       | `string` | yes      | Tenant-scoped verification token      |
+| `callbackURL` | `string` | no       | Redirect target after (or on failure) |
+
+**Response:** `{ status: true, user: null }`, or a redirect to `callbackURL` (with `?error=<code>` on failure) when provided
+
 ## OAuth configuration
 
 Requires management authorization.
