@@ -1,3 +1,8 @@
-[] Add Tenant ownership model
+[x] Add Tenant ownership model
 
-- allow control over a tenant through RBAC
+- platform users own tenants they create (`ownerId`)
+- management scoped to ownership (or global `canManageTenants`)
+
+[] Tenant RBAC beyond ownership
+
+- members / roles (admin, member) for collaborative control

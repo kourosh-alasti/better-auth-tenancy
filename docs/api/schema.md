@@ -4,14 +4,15 @@ The plugin extends the Better Auth database schema via `mergeSchema`.
 
 ## `tenant`
 
-| Field       | Type     | Notes                           |
-| ----------- | -------- | ------------------------------- |
-| `id`        | `string` | Primary key (adapter default)   |
-| `name`      | `string` | Required, sortable              |
-| `slug`      | `string` | Required, unique, sortable      |
-| `metadata`  | `string` | Optional JSON string            |
-| `createdAt` | `date`   | Default: now                    |
-| `updatedAt` | `date`   | Default: now, updated on change |
+| Field       | Type     | Notes                                               |
+| ----------- | -------- | --------------------------------------------------- |
+| `id`        | `string` | Primary key (adapter default)                       |
+| `name`      | `string` | Required, sortable                                  |
+| `slug`      | `string` | Required, unique, sortable                          |
+| `ownerId`   | `string` | Optional FK → `user.id`, indexed, onDelete set null |
+| `metadata`  | `string` | Optional JSON string                                |
+| `createdAt` | `date`   | Default: now                                        |
+| `updatedAt` | `date`   | Default: now, updated on change                     |
 
 ## `tenantOauthConfig`
 
@@ -87,6 +88,7 @@ interface Tenant {
   id: string;
   name: string;
   slug: string;
+  ownerId?: string | null;
   metadata?: string | null;
   createdAt: Date;
   updatedAt: Date;

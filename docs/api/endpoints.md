@@ -4,11 +4,11 @@ All endpoints are mounted under your Better Auth base path (e.g. `/api/auth`).
 
 ## Tenant management
 
-Requires management authorization unless noted.
+Requires management authorization unless noted. See [Tenant management](/guide/tenant-management) for ownership vs global admin rules.
 
 ### `POST /tenant/create`
 
-Create a new tenant.
+Create a new tenant. The authenticated platform user’s id is stored as `ownerId` when a session is present.
 
 **Body**
 
@@ -39,7 +39,7 @@ Get a tenant by id or slug.
 
 ### `GET /tenant/list`
 
-List all tenants.
+List tenants the caller can manage (all for global admin; owned only for platform users).
 
 **Response:** Array of tenant objects
 
@@ -47,16 +47,16 @@ List all tenants.
 
 ### `POST /tenant/update`
 
-Update a tenant.
+Update a tenant. Requires ownership or global admin.
 
 **Body**
 
-| Field      | Type     | Required | Description      |
-| ---------- | -------- | -------- | ---------------- |
-| `tenantId` | `string` | yes      | Tenant to update |
-| `name`     | `string` | no       | New display name |
-| `slug`     | `string` | no       | New slug         |
-| `metadata` | `object` | no       | New metadata     |
+| Field  | Type     | Required | Description      |
+| ------ | -------- | -------- | ---------------- |
+| `id`   | `string` | yes      | Tenant to update |
+| `data` | `object` | yes      | Fields to update |
+
+`data` may include `name`, `slug`, and `metadata`.
 
 **Response:** Updated tenant object
 
@@ -64,13 +64,13 @@ Update a tenant.
 
 ### `POST /tenant/delete`
 
-Delete a tenant and cascade related records.
+Delete a tenant and cascade related records. Requires ownership or global admin.
 
 **Body**
 
-| Field      | Type     | Required | Description      |
-| ---------- | -------- | -------- | ---------------- |
-| `tenantId` | `string` | yes      | Tenant to delete |
+| Field | Type     | Required | Description      |
+| ----- | -------- | -------- | ---------------- |
+| `id`  | `string` | yes      | Tenant to delete |
 
 **Response:** `{ success: true }`
 

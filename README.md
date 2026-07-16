@@ -73,12 +73,13 @@ By default, the global unique constraint on `user.email` is removed so the same 
 ### Quick example
 
 ```ts
-// Create a tenant
+// Platform user signs in on app.com, then creates a tenant they own
 await auth.api.createTenant({
   body: { name: "Acme", slug: "acme" },
+  headers, // platform session cookie
 });
 
-// Sign up under that tenant
+// Sign up under that tenant (tenant host /tenant/* routes)
 await authClient.signUpEmailTenant({
   tenantId: tenant.id,
   email: "user@example.com",

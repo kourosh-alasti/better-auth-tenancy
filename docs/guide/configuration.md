@@ -62,9 +62,11 @@ When `true`, emails remain globally unique — one email maps to one user across
 
 ## `canManageTenants`
 
-Authorizes tenant and OAuth-config management requests (`create`, `update`, `delete` tenants and OAuth configs).
+Global admin bypass for tenant and OAuth-config management.
 
-When provided, this **fully replaces** the default check (which requires an authenticated session). Return `false` to deny access.
+When this returns `true`, the caller can manage every tenant. When it returns `false` or is omitted, access falls through to **ownership**: an authenticated platform user (`user.tenantId` null) may create tenants and manage only those they own.
+
+Tenant end-users and unauthenticated callers are denied. There is no “any session is admin” default.
 
 Example — admin API key:
 
@@ -72,6 +74,17 @@ Example — admin API key:
 tenantAuth({
   canManageTenants: (ctx) => ctx.headers?.get("x-admin-key") === process.env.ADMIN_SECRET,
 });
+```
+
+Platform users create tenants through a normal Better Auth session (no admin key required):
+
+```ts
+// Signed in on app.com via core sign-in
+await auth.api.createTenant({
+  body: { name: "Acme", slug: "acme" },
+  headers, // session cookie
+});
+// → tenant.ownerId === session.user.id
 ```
 
 ## `schema`
