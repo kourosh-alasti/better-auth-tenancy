@@ -544,6 +544,52 @@ describe("tenant-auth", async () => {
       expect(session).toBeTruthy();
       expect((session!.session as { tenantId?: string }).tenantId).toBe(tenantA.id);
     });
+
+    it("should reject an untrusted callbackURL on sign-in", async () => {
+      await expect(
+        auth.api.signInEmailTenant({
+          body: {
+            tenantId: tenantA.id,
+            email,
+            password: "password-a",
+            callbackURL: "https://evil.example",
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
+    });
+
+    it("should allow a relative callbackURL on sign-in and set Location", async () => {
+      const { headers, response } = await auth.api.signInEmailTenant({
+        body: {
+          tenantId: tenantA.id,
+          email,
+          password: "password-a",
+          callbackURL: "/dashboard",
+        },
+        returnHeaders: true,
+      });
+      expect(response.redirect).toBe(true);
+      expect(response.url).toBe("/dashboard");
+      expect(headers.get("location")).toBe("/dashboard");
+    });
+
+    it("should reject an untrusted callbackURL on sign-up", async () => {
+      await expect(
+        auth.api.signUpEmailTenant({
+          body: {
+            tenantId: tenantA.id,
+            name: "Evil Redirect",
+            email: "evil-redirect@example.com",
+            password: "password-evil",
+            callbackURL: "https://evil.example",
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
+    });
   });
 
   describe("per-tenant OAuth configuration", () => {
@@ -618,6 +664,22 @@ describe("tenant-auth", async () => {
       expect(res.url).toBeDefined();
       const url = new URL(res.url!);
       expect(url.searchParams.get("client_id")).toBe("global-client-id");
+    });
+
+    it("should reject an untrusted errorCallbackURL on social sign-in", async () => {
+      await expect(
+        auth.api.signInSocialTenant({
+          body: {
+            tenantId: tenantA.id,
+            provider: "google",
+            callbackURL: "/dashboard",
+            errorCallbackURL: "https://evil.example",
+            disableRedirect: true,
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
     });
 
     it("should update an existing OAuth config", async () => {
@@ -784,3 +846,4 @@ describe("tenant-auth", async () => {
     });
   });
 });
+

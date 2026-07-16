@@ -31,6 +31,7 @@ import { TENANT_AUTH_ERROR_CODES } from "better-auth-tenancy/client";
 | `OAUTH_CONFIG_NOT_FOUND`        | OAuth configuration not found for this tenant                               |
 | `FAILED_TO_CREATE_USER`         | Failed to create user                                                       |
 | `FAILED_TO_CREATE_SESSION`      | Failed to create session                                                    |
+| `INVALID_CALLBACK_URL`          | Invalid callbackURL                                                         |
 
 ## Usage
 

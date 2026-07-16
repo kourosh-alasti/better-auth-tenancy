@@ -36,6 +36,10 @@ Endpoint: `POST /tenant/sign-in/email`
 
 Sign-in validates credentials against the user record **for that tenant only**. The same email under a different tenant is a separate user with its own password.
 
+## Callback URL validation
+
+`callbackURL` (on both sign-up and sign-in) is checked against your Better Auth `trustedOrigins` before it's used — as the `Location` redirect on sign-in, and before it's embedded in a verification email link. Relative paths (e.g. `/dashboard`) are always allowed; absolute URLs must match a configured trusted origin or the request is rejected with `INVALID_CALLBACK_URL`.
+
 ## Resolving the tenant
 
 Pass `tenantId` in the request body, or use one of these alternatives:
@@ -67,5 +71,6 @@ console.log(session?.tenantId);
 | `EMAIL_NOT_VERIFIED`         | Email verification required              |
 | `EMAIL_PASSWORD_NOT_ENABLED` | Email/password auth disabled in config   |
 | `TENANT_NOT_FOUND`           | Invalid or missing tenant id             |
+| `INVALID_CALLBACK_URL`       | `callbackURL` isn't a trusted origin     |
 
 See [Error codes](/api/error-codes) for the full list.

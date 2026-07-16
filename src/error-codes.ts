@@ -21,4 +21,7 @@ export const TENANT_AUTH_ERROR_CODES = defineErrorCodes({
   OAUTH_CONFIG_NOT_FOUND: "OAuth configuration not found for this tenant",
   FAILED_TO_CREATE_USER: "Failed to create user",
   FAILED_TO_CREATE_SESSION: "Failed to create session",
+  INVALID_VERIFICATION_TOKEN: "Invalid or unsupported verification token",
+  SESSION_TENANT_MISMATCH: "This session cannot be used for this tenant or host",
+  INVALID_CALLBACK_URL: "Invalid callbackURL",
 });

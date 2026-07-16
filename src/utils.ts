@@ -86,6 +86,85 @@ export async function resolveTenantId(
 }
 
 /**
+ * Resolves the tenant id from the request like `resolveTenantId`, but
+ * returns `null` instead of throwing when none can be determined.
+ */
+export async function tryResolveTenantId(
+  ctx: GenericEndpointContext,
+  options?: TenantAuthOptions,
+): Promise<string | null> {
+  try {
+    return await resolveTenantId(ctx, options);
+  } catch {
+    return null;
+  }
+}
+
+type SessionWithTenant = {
+  session?: { tenantId?: string | null | undefined } | null | undefined;
+  user?: { tenantId?: string | null | undefined } | null | undefined;
+};
+
+/**
+ * Enforces that an existing session matches the tenant (or platform)
+ * context of the request it's being used with:
+ *
+ * 1. If a tenant can be resolved for the request, the session's tenant
+ *    id (`session.session.tenantId`, falling back to
+ *    `session.user.tenantId`) must equal it — otherwise the session
+ *    belongs to a different tenant host.
+ * 2. Else, if `options.isPlatformRequest` resolves to `true`, the
+ *    session must not carry a tenant id — tenant sessions can't be
+ *    reused on the platform host.
+ * 3. If neither can be determined, nothing is enforced (backward
+ *    compatible).
+ */
+export async function assertSessionMatchesRequest(
+  ctx: GenericEndpointContext,
+  session: SessionWithTenant,
+  options?: TenantAuthOptions,
+): Promise<void> {
+  const sessionTenantId = session.session?.tenantId ?? session.user?.tenantId ?? null;
+
+  const requestTenantId = await tryResolveTenantId(ctx, options);
+  if (requestTenantId) {
+    if (sessionTenantId !== requestTenantId) {
+      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.SESSION_TENANT_MISMATCH);
+    }
+    return;
+  }
+
+  if (options?.isPlatformRequest && sessionTenantId) {
+    const isPlatform = await options.isPlatformRequest(ctx);
+    if (isPlatform) {
+      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.SESSION_TENANT_MISMATCH);
+    }
+  }
+}
+
+/**
+ * Validates a redirect-style URL (`callbackURL`, `newUserCallbackURL`,
+ * `errorCallbackURL`, ...) against Better Auth's `trustedOrigins`
+ * configuration.
+ *
+ * No-ops when `url` is falsy so callers can pass optional fields
+ * directly. Relative paths (e.g. `/dashboard`) are always allowed.
+ * Throws a `FORBIDDEN` `APIError` (mirroring Better Auth's own
+ * `INVALID_CALLBACK_URL`) when the URL isn't trusted.
+ */
+export function assertTrustedRedirectURL(
+  ctx: GenericEndpointContext,
+  url: string | null | undefined,
+  label = "callbackURL",
+): void {
+  if (!url) return;
+  if (!ctx.context.isTrustedOrigin(url, { allowRelativePaths: true })) {
+    ctx.context.logger.error(`Invalid ${label}: ${url}`);
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVALID_CALLBACK_URL);
+  }
+}
+
+/**
  * Resolves the tenant id and ensures the tenant exists.
  */
 export async function requireTenant(
