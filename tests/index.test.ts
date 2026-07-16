@@ -1425,6 +1425,213 @@ describe("tenant-auth", async () => {
     });
   });
 
+  describe("OAuth sign-up policy", async () => {
+    const adminHeadersLocal = new Headers({ "x-admin": "1" });
+
+    const runTenantOAuthCallback = async (
+      oauthAuth: Awaited<ReturnType<typeof getTestInstance>>["auth"],
+      oauthFetch: Awaited<ReturnType<typeof getTestInstance>>["customFetchImpl"],
+      opts: {
+        tenantId: string;
+        inviteToken?: string;
+        providerUser: { id: string; email: string; name: string };
+      },
+    ) => {
+      const { headers: signInHeaders, response: signInRes } =
+        await oauthAuth.api.signInSocialTenant({
+          body: {
+            tenantId: opts.tenantId,
+            provider: "google",
+            callbackURL: "/welcome",
+            errorCallbackURL: "/error",
+            disableRedirect: true,
+            ...(opts.inviteToken ? { inviteToken: opts.inviteToken } : {}),
+          },
+          returnHeaders: true,
+        });
+      const state = new URL(signInRes.url!).searchParams.get("state")!;
+      const cookies = parseSetCookieHeader(signInHeaders.get("set-cookie") || "");
+      const cookieHeader = Array.from(cookies.entries())
+        .map(([name, { value }]) => `${name}=${value}`)
+        .join("; ");
+      providerMocks.validateAuthorizationCode.mockResolvedValue({
+        accessToken: "test-access-token",
+        refreshToken: "test-refresh-token",
+      });
+      providerMocks.getUserInfo.mockResolvedValue({
+        user: {
+          id: opts.providerUser.id,
+          email: opts.providerUser.email,
+          name: opts.providerUser.name,
+          emailVerified: true,
+        },
+        data: {},
+      });
+      return await oauthFetch(
+        `http://localhost:3000/api/auth/tenant/callback/google?code=test-code&state=${encodeURIComponent(state)}`,
+        {
+          method: "GET",
+          redirect: "manual",
+          headers: { cookie: cookieHeader },
+        },
+      );
+    };
+
+    describe("invite-only OAuth registration", async () => {
+      const { auth: inviteOAuthAuth, customFetchImpl: inviteOAuthFetch } = await getTestInstance(
+        {
+          emailAndPassword: { enabled: true },
+          socialProviders: {
+            google: {
+              clientId: "global-client-id",
+              clientSecret: "global-client-secret",
+            },
+          },
+          plugins: [
+            tenantAuth({
+              canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+              requireInviteForTenantSignUp: true,
+            }),
+          ],
+        },
+        { clientOptions: { plugins: [tenantAuthClient()] } },
+      );
+
+      const inviteOAuthTenant = await inviteOAuthAuth.api.createTenant({
+        body: { name: "Invite OAuth", slug: "invite-oauth" },
+        headers: adminHeadersLocal,
+      });
+      await inviteOAuthAuth.api.registerTenantOAuthConfig({
+        body: {
+          tenantId: inviteOAuthTenant.id,
+          providerId: "google",
+          clientId: "invite-oauth-client",
+          clientSecret: "invite-oauth-secret",
+        },
+        headers: adminHeadersLocal,
+      });
+
+      it("should reject first-time OAuth registration without an invite", async () => {
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          providerUser: {
+            id: "google-no-invite",
+            email: "oauth-no-invite@example.com",
+            name: "No Invite",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_required");
+      });
+
+      it("should allow first-time OAuth registration with a valid invite and consume it", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-invited@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-invited",
+            email: "oauth-invited@example.com",
+            name: "Invited OAuth",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+
+        const invites = await inviteOAuthAuth.api.listTenantInvites({
+          query: { tenantId: inviteOAuthTenant.id, includeConsumed: true },
+          headers: adminHeadersLocal,
+        });
+        expect(invites.find((item) => item.id === invite.id)?.consumedAt).toBeTruthy();
+      });
+
+      it("should allow subsequent OAuth sign-in without an invite", async () => {
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          providerUser: {
+            id: "google-invited",
+            email: "oauth-invited@example.com",
+            name: "Invited OAuth",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+      });
+    });
+
+    describe("domain allowlist OAuth registration", async () => {
+      const { auth: domainOAuthAuth, customFetchImpl: domainOAuthFetch } = await getTestInstance(
+        {
+          emailAndPassword: { enabled: true },
+          socialProviders: {
+            google: {
+              clientId: "global-client-id",
+              clientSecret: "global-client-secret",
+            },
+          },
+          plugins: [
+            tenantAuth({
+              canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+              allowedEmailDomains: ["allowed.example"],
+            }),
+          ],
+        },
+        { clientOptions: { plugins: [tenantAuthClient()] } },
+      );
+
+      const domainOAuthTenant = await domainOAuthAuth.api.createTenant({
+        body: { name: "Domain OAuth", slug: "domain-oauth" },
+        headers: adminHeadersLocal,
+      });
+      await domainOAuthAuth.api.registerTenantOAuthConfig({
+        body: {
+          tenantId: domainOAuthTenant.id,
+          providerId: "google",
+          clientId: "domain-oauth-client",
+          clientSecret: "domain-oauth-secret",
+        },
+        headers: adminHeadersLocal,
+      });
+
+      it("should reject OAuth registration when the email domain is not allowlisted", async () => {
+        const response = await runTenantOAuthCallback(domainOAuthAuth, domainOAuthFetch, {
+          tenantId: domainOAuthTenant.id,
+          providerUser: {
+            id: "google-blocked-domain",
+            email: "user@blocked.example",
+            name: "Blocked Domain",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=email_domain_not_allowed");
+      });
+
+      it("should allow OAuth registration when the email domain is allowlisted", async () => {
+        const response = await runTenantOAuthCallback(domainOAuthAuth, domainOAuthFetch, {
+          tenantId: domainOAuthTenant.id,
+          providerUser: {
+            id: "google-allowed-domain",
+            email: "user@allowed.example",
+            name: "Allowed Domain",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+      });
+    });
+  });
+
   describe("tenant deletion", () => {
     it("should delete a tenant", async () => {
       const tenant = await auth.api.createTenant({

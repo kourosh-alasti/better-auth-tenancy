@@ -60,4 +60,37 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm test
+      - run: pnpm test:unit
+
+  test-postgres:
+    name: Test (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: better_auth
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d better_auth"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test:postgres
+        env:
+          TEST_POSTGRES: "1"
