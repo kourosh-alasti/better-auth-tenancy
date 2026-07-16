@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "better-auth-tenancy-docs",
-  "compatibility_date": "2026-06-28",
+  "compatibility_date": "2026-07-15",
   "routes": [
     {
       "pattern": "better-auth-tenancy.alasti.company",
