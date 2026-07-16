@@ -69,6 +69,8 @@ describe("tenant-auth", async () => {
       expect(tenantA.id).toBeDefined();
       expect(tenantA.slug).toBe("tenant-a");
       expect(tenantB.slug).toBe("tenant-b");
+      // Global admin (API key) creates without a session → no owner.
+      expect(tenantA.ownerId ?? null).toBeNull();
     });
 
     it("should reject duplicate slugs", async () => {
@@ -112,6 +114,140 @@ describe("tenant-auth", async () => {
         headers: adminHeaders,
       });
       expect(tenants.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe("tenant ownership", () => {
+    const ownerHeaders = new Headers();
+    const otherHeaders = new Headers();
+    let ownedTenant: { id: string; slug: string; ownerId?: string | null };
+
+    it("should let a platform user create and own a tenant", async () => {
+      const ownerSignUp = await auth.api.signUpEmail({
+        body: {
+          name: "Platform Owner",
+          email: "owner@platform.com",
+          password: "owner-password",
+        },
+        returnHeaders: true,
+      });
+      expect(ownerSignUp.response.user.id).toBeDefined();
+      expect(
+        (
+          ownerSignUp.response.user as typeof ownerSignUp.response.user & {
+            tenantId?: string | null;
+          }
+        ).tenantId ?? null,
+      ).toBeNull();
+
+      const ownerCookies = parseSetCookieHeader(ownerSignUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of ownerCookies.entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      ownedTenant = await auth.api.createTenant({
+        body: { name: "Owned", slug: "owned-tenant" },
+        headers: ownerHeaders,
+      });
+      expect(ownedTenant.ownerId).toBe(ownerSignUp.response.user.id);
+    });
+
+    it("should list only owned tenants for a platform user", async () => {
+      const tenants = await auth.api.listTenants({ headers: ownerHeaders });
+      expect(tenants.every((t) => t.ownerId === ownedTenant.ownerId)).toBe(true);
+      expect(tenants.some((t) => t.id === ownedTenant.id)).toBe(true);
+      expect(tenants.some((t) => t.id === tenantA.id)).toBe(false);
+    });
+
+    it("should let the owner update their tenant", async () => {
+      const updated = await auth.api.updateTenant({
+        body: { id: ownedTenant.id, data: { name: "Owned Renamed" } },
+        headers: ownerHeaders,
+      });
+      expect(updated.name).toBe("Owned Renamed");
+    });
+
+    it("should deny another platform user from managing a tenant they do not own", async () => {
+      const otherSignUp = await auth.api.signUpEmail({
+        body: {
+          name: "Other Platform",
+          email: "other@platform.com",
+          password: "other-password",
+        },
+        returnHeaders: true,
+      });
+      const otherCookies = parseSetCookieHeader(otherSignUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of otherCookies.entries()) {
+        otherHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await expect(
+        auth.api.updateTenant({
+          body: { id: ownedTenant.id, data: { name: "Hijacked" } },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+
+      await expect(
+        auth.api.deleteTenant({
+          body: { id: ownedTenant.id },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+
+      await expect(
+        auth.api.registerTenantOAuthConfig({
+          body: {
+            tenantId: ownedTenant.id,
+            providerId: "google",
+            clientId: "stolen",
+            clientSecret: "stolen",
+          },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+    });
+
+    it("should deny tenant end-users from creating tenants", async () => {
+      const tenantUser = await auth.api.signUpEmailTenant({
+        body: {
+          tenantId: tenantA.id,
+          name: "Tenant User",
+          email: "enduser@example.com",
+          password: "enduser-password",
+        },
+        returnHeaders: true,
+      });
+      const cookies = parseSetCookieHeader(tenantUser.headers.get("set-cookie") || "");
+      const endUserHeaders = new Headers();
+      for (const [name, { value }] of cookies.entries()) {
+        endUserHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await expect(
+        auth.api.createTenant({
+          body: { name: "Should Fail", slug: "should-fail" },
+          headers: endUserHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should let the owner delete their tenant", async () => {
+      await auth.api.deleteTenant({
+        body: { id: ownedTenant.id },
+        headers: ownerHeaders,
+      });
+      await expect(auth.api.getTenant({ query: { id: ownedTenant.id } })).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_FOUND" },
+      });
     });
   });
 
