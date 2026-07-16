@@ -4,11 +4,11 @@ All endpoints are mounted under your Better Auth base path (e.g. `/api/auth`).
 
 ## Tenant management
 
-Requires management authorization unless noted.
+Requires management authorization unless noted. See [Tenant management](/guide/tenant-management) for membership roles vs global admin rules.
 
 ### `POST /tenant/create`
 
-Create a new tenant.
+Create a new tenant. The authenticated platform user’s id is stored as `ownerId` and an owner `tenantMember` row is created when a session is present.
 
 **Body**
 
@@ -39,7 +39,7 @@ Get a tenant by id or slug.
 
 ### `GET /tenant/list`
 
-List all tenants.
+List tenants the caller can access (all for global admin; memberships for platform users).
 
 **Response:** Array of tenant objects
 
@@ -47,16 +47,16 @@ List all tenants.
 
 ### `POST /tenant/update`
 
-Update a tenant.
+Update a tenant. Requires `admin` role or higher (or global admin).
 
 **Body**
 
-| Field      | Type     | Required | Description      |
-| ---------- | -------- | -------- | ---------------- |
-| `tenantId` | `string` | yes      | Tenant to update |
-| `name`     | `string` | no       | New display name |
-| `slug`     | `string` | no       | New slug         |
-| `metadata` | `object` | no       | New metadata     |
+| Field  | Type     | Required | Description      |
+| ------ | -------- | -------- | ---------------- |
+| `id`   | `string` | yes      | Tenant to update |
+| `data` | `object` | yes      | Fields to update |
+
+`data` may include `name`, `slug`, and `metadata`.
 
 **Response:** Updated tenant object
 
@@ -64,13 +64,60 @@ Update a tenant.
 
 ### `POST /tenant/delete`
 
-Delete a tenant and cascade related records.
+Delete a tenant and cascade related records. Requires `owner` role (or global admin).
 
 **Body**
 
-| Field      | Type     | Required | Description      |
-| ---------- | -------- | -------- | ---------------- |
-| `tenantId` | `string` | yes      | Tenant to delete |
+| Field | Type     | Required | Description      |
+| ----- | -------- | -------- | ---------------- |
+| `id`  | `string` | yes      | Tenant to delete |
+
+**Response:** `{ success: true }`
+
+## Membership
+
+### `POST /tenant/member/add`
+
+Add a platform user as a member. Requires `admin` or higher. Admins may only assign role `member`.
+
+**Body**
+
+| Field      | Type     | Required | Description                    |
+| ---------- | -------- | -------- | ------------------------------ |
+| `tenantId` | `string` | yes      | Tenant                         |
+| `userId`   | `string` | one of   | Platform user id               |
+| `email`    | `string` | one of   | Platform user email            |
+| `role`     | `string` | no       | `owner` \| `admin` \| `member` |
+
+**Response:** TenantMember object
+
+---
+
+### `GET /tenant/member/list`
+
+List members. Requires `member` role or higher.
+
+**Query:** `tenantId`
+
+**Response:** Array of TenantMember objects
+
+---
+
+### `POST /tenant/member/update`
+
+Change a member’s role. Requires `owner` (or global admin). Cannot demote the last owner.
+
+**Body:** `tenantId`, `userId`, `role`
+
+**Response:** TenantMember object
+
+---
+
+### `POST /tenant/member/remove`
+
+Remove a member. Requires `admin` or higher. Admins cannot remove owners/admins. Cannot remove the last owner.
+
+**Body:** `tenantId`, `userId`
 
 **Response:** `{ success: true }`
 
@@ -113,6 +160,21 @@ Sign in a user under a tenant.
 | `rememberMe`  | `boolean` | no       | Remember session (default true) |
 
 **Response:** User and session
+
+---
+
+### `GET /tenant/verify-email`
+
+Verify a tenant-scoped user's email from the link sent by `signUpEmailTenant` / `signInEmailTenant`. Not interchangeable with core's `GET /verify-email` — see [Email auth](/guide/email-auth#email-verification).
+
+**Query**
+
+| Field         | Type     | Required | Description                           |
+| ------------- | -------- | -------- | ------------------------------------- |
+| `token`       | `string` | yes      | Tenant-scoped verification token      |
+| `callbackURL` | `string` | no       | Redirect target after (or on failure) |
+
+**Response:** `{ status: true, user: null }`, or a redirect to `callbackURL` (with `?error=<code>` on failure) when provided
 
 ## OAuth configuration
 

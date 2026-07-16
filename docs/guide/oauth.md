@@ -84,6 +84,8 @@ Endpoint: `POST /tenant/sign-in/social`
 
 The plugin resolves the provider from the tenant's database config first, then from global `socialProviders`.
 
+`callbackURL`, `newUserCallbackURL`, and `errorCallbackURL` are all validated against your Better Auth `trustedOrigins` before the OAuth flow starts, and the final redirect target is re-checked at the callback. Relative paths (e.g. `/welcome`) are always allowed; untrusted absolute URLs are rejected with `INVALID_CALLBACK_URL`.
+
 ## Callback
 
 The OAuth callback is handled at:
@@ -107,5 +109,6 @@ Only built-in Better Auth social providers (e.g. `google`, `github`) are support
 - Client secrets are never returned by list/get endpoints
 - Credentials are encrypted with `symmetricEncrypt` using your auth secret
 - Register redirect URIs in your OAuth provider's console for each tenant if using custom redirect URIs
+- Callback URLs must be in your Better Auth `trustedOrigins` (relative paths are OK) — see [Callback URL validation](/guide/email-auth#callback-url-validation)
 
 See [Endpoints](/api/endpoints) and the [Next.js demo](/examples/nextjs) for a complete OAuth walkthrough.

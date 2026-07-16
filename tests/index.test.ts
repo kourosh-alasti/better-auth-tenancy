@@ -69,6 +69,8 @@ describe("tenant-auth", async () => {
       expect(tenantA.id).toBeDefined();
       expect(tenantA.slug).toBe("tenant-a");
       expect(tenantB.slug).toBe("tenant-b");
+      // Global admin (API key) creates without a session → no owner.
+      expect(tenantA.ownerId ?? null).toBeNull();
     });
 
     it("should reject duplicate slugs", async () => {
@@ -112,6 +114,307 @@ describe("tenant-auth", async () => {
         headers: adminHeaders,
       });
       expect(tenants.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe("tenant ownership", () => {
+    const ownerHeaders = new Headers();
+    const otherHeaders = new Headers();
+    let ownedTenant: { id: string; slug: string; ownerId?: string | null };
+
+    it("should let a platform user create and own a tenant", async () => {
+      const ownerSignUp = await auth.api.signUpEmail({
+        body: {
+          name: "Platform Owner",
+          email: "owner@platform.com",
+          password: "owner-password",
+        },
+        returnHeaders: true,
+      });
+      expect(ownerSignUp.response.user.id).toBeDefined();
+      expect(
+        (
+          ownerSignUp.response.user as typeof ownerSignUp.response.user & {
+            tenantId?: string | null;
+          }
+        ).tenantId ?? null,
+      ).toBeNull();
+
+      const ownerCookies = parseSetCookieHeader(ownerSignUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of ownerCookies.entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      ownedTenant = await auth.api.createTenant({
+        body: { name: "Owned", slug: "owned-tenant" },
+        headers: ownerHeaders,
+      });
+      expect(ownedTenant.ownerId).toBe(ownerSignUp.response.user.id);
+
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: ownedTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members).toHaveLength(1);
+      expect(members[0]!.userId).toBe(ownerSignUp.response.user.id);
+      expect(members[0]!.role).toBe("owner");
+    });
+
+    it("should list only owned tenants for a platform user", async () => {
+      const tenants = await auth.api.listTenants({ headers: ownerHeaders });
+      expect(tenants.every((t) => t.ownerId === ownedTenant.ownerId)).toBe(true);
+      expect(tenants.some((t) => t.id === ownedTenant.id)).toBe(true);
+      expect(tenants.some((t) => t.id === tenantA.id)).toBe(false);
+    });
+
+    it("should let the owner update their tenant", async () => {
+      const updated = await auth.api.updateTenant({
+        body: { id: ownedTenant.id, data: { name: "Owned Renamed" } },
+        headers: ownerHeaders,
+      });
+      expect(updated.name).toBe("Owned Renamed");
+    });
+
+    it("should deny another platform user from managing a tenant they do not own", async () => {
+      const otherSignUp = await auth.api.signUpEmail({
+        body: {
+          name: "Other Platform",
+          email: "other@platform.com",
+          password: "other-password",
+        },
+        returnHeaders: true,
+      });
+      const otherCookies = parseSetCookieHeader(otherSignUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of otherCookies.entries()) {
+        otherHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await expect(
+        auth.api.updateTenant({
+          body: { id: ownedTenant.id, data: { name: "Hijacked" } },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+
+      await expect(
+        auth.api.deleteTenant({
+          body: { id: ownedTenant.id },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+
+      await expect(
+        auth.api.registerTenantOAuthConfig({
+          body: {
+            tenantId: ownedTenant.id,
+            providerId: "google",
+            clientId: "stolen",
+            clientSecret: "stolen",
+          },
+          headers: otherHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_OWNED" },
+      });
+    });
+
+    it("should deny tenant end-users from creating tenants", async () => {
+      const tenantUser = await auth.api.signUpEmailTenant({
+        body: {
+          tenantId: tenantA.id,
+          name: "Tenant User",
+          email: "enduser@example.com",
+          password: "enduser-password",
+        },
+        returnHeaders: true,
+      });
+      const cookies = parseSetCookieHeader(tenantUser.headers.get("set-cookie") || "");
+      const endUserHeaders = new Headers();
+      for (const [name, { value }] of cookies.entries()) {
+        endUserHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await expect(
+        auth.api.createTenant({
+          body: { name: "Should Fail", slug: "should-fail" },
+          headers: endUserHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should let the owner delete their tenant", async () => {
+      await auth.api.deleteTenant({
+        body: { id: ownedTenant.id },
+        headers: ownerHeaders,
+      });
+      await expect(auth.api.getTenant({ query: { id: ownedTenant.id } })).rejects.toMatchObject({
+        body: { code: "TENANT_NOT_FOUND" },
+      });
+    });
+  });
+
+  describe("tenant membership RBAC", () => {
+    const ownerHeaders = new Headers();
+    const adminHeadersLocal = new Headers();
+    const memberHeaders = new Headers();
+    let rbacTenant: { id: string };
+    let ownerUserId: string;
+    let adminUserId: string;
+    let memberUserId: string;
+
+    it("should set up owner, admin, and member", async () => {
+      const owner = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Owner",
+          email: "rbac-owner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      ownerUserId = owner.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        owner.headers.get("set-cookie") || "",
+      ).entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      rbacTenant = await auth.api.createTenant({
+        body: { name: "RBAC Co", slug: "rbac-co" },
+        headers: ownerHeaders,
+      });
+
+      const admin = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Admin",
+          email: "rbac-admin@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      adminUserId = admin.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        admin.headers.get("set-cookie") || "",
+      ).entries()) {
+        adminHeadersLocal.append("cookie", `${name}=${value}`);
+      }
+
+      const member = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Member",
+          email: "rbac-member@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      memberUserId = member.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        member.headers.get("set-cookie") || "",
+      ).entries()) {
+        memberHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await auth.api.addTenantMember({
+        body: { tenantId: rbacTenant.id, userId: adminUserId, role: "admin" },
+        headers: ownerHeaders,
+      });
+      await auth.api.addTenantMember({
+        body: {
+          tenantId: rbacTenant.id,
+          email: "rbac-member@platform.com",
+          role: "member",
+        },
+        headers: ownerHeaders,
+      });
+    });
+
+    it("should let an admin update the tenant but not delete it", async () => {
+      const updated = await auth.api.updateTenant({
+        body: { id: rbacTenant.id, data: { name: "RBAC Co Renamed" } },
+        headers: adminHeadersLocal,
+      });
+      expect(updated.name).toBe("RBAC Co Renamed");
+
+      await expect(
+        auth.api.deleteTenant({
+          body: { id: rbacTenant.id },
+          headers: adminHeadersLocal,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should let members list members but not update the tenant", async () => {
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: rbacTenant.id },
+        headers: memberHeaders,
+      });
+      expect(members.length).toBe(3);
+
+      await expect(
+        auth.api.updateTenant({
+          body: { id: rbacTenant.id, data: { name: "Nope" } },
+          headers: memberHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should prevent admins from adding owners", async () => {
+      const extra = await auth.api.signUpEmail({
+        body: {
+          name: "Extra",
+          email: "rbac-extra@platform.com",
+          password: "password",
+        },
+      });
+      await expect(
+        auth.api.addTenantMember({
+          body: {
+            tenantId: rbacTenant.id,
+            userId: extra.user.id,
+            role: "owner",
+          },
+          headers: adminHeadersLocal,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should list the tenant for all members", async () => {
+      const forMember = await auth.api.listTenants({ headers: memberHeaders });
+      expect(forMember.some((t) => t.id === rbacTenant.id)).toBe(true);
+    });
+
+    it("should prevent removing the last owner", async () => {
+      await expect(
+        auth.api.removeTenantMember({
+          body: { tenantId: rbacTenant.id, userId: ownerUserId },
+          headers: ownerHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "CANNOT_REMOVE_LAST_OWNER" },
+      });
+    });
+
+    it("should let the owner remove a member", async () => {
+      await auth.api.removeTenantMember({
+        body: { tenantId: rbacTenant.id, userId: memberUserId },
+        headers: ownerHeaders,
+      });
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: rbacTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members.some((m) => m.userId === memberUserId)).toBe(false);
     });
   });
 
@@ -241,6 +544,174 @@ describe("tenant-auth", async () => {
       expect(session).toBeTruthy();
       expect((session!.session as { tenantId?: string }).tenantId).toBe(tenantA.id);
     });
+
+    it("should reject an untrusted callbackURL on sign-in", async () => {
+      await expect(
+        auth.api.signInEmailTenant({
+          body: {
+            tenantId: tenantA.id,
+            email,
+            password: "password-a",
+            callbackURL: "https://evil.example",
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
+    });
+
+    it("should allow a relative callbackURL on sign-in and set Location", async () => {
+      const { headers, response } = await auth.api.signInEmailTenant({
+        body: {
+          tenantId: tenantA.id,
+          email,
+          password: "password-a",
+          callbackURL: "/dashboard",
+        },
+        returnHeaders: true,
+      });
+      expect(response.redirect).toBe(true);
+      expect(response.url).toBe("/dashboard");
+      expect(headers.get("location")).toBe("/dashboard");
+    });
+
+    it("should reject an untrusted callbackURL on sign-up", async () => {
+      await expect(
+        auth.api.signUpEmailTenant({
+          body: {
+            tenantId: tenantA.id,
+            name: "Evil Redirect",
+            email: "evil-redirect@example.com",
+            password: "password-evil",
+            callbackURL: "https://evil.example",
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
+    });
+  });
+
+  describe("session ↔ tenant binding", () => {
+    const email = "shared@example.com";
+    const tenantASessionHeaders = new Headers();
+
+    it("should sign in under tenant A and capture the session", async () => {
+      const { headers, response } = await auth.api.signInEmailTenant({
+        body: { tenantId: tenantA.id, email, password: "password-a" },
+        returnHeaders: true,
+      });
+      expect(response.token).toBeDefined();
+      for (const [name, { value }] of parseSetCookieHeader(
+        headers.get("set-cookie") || "",
+      ).entries()) {
+        tenantASessionHeaders.append("cookie", `${name}=${value}`);
+      }
+    });
+
+    it("should deny reusing a tenant A session for a tenant B request (body tenantId)", async () => {
+      await expect(
+        auth.api.signInEmailTenant({
+          body: { tenantId: tenantB.id, email, password: "password-b" },
+          headers: tenantASessionHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "SESSION_TENANT_MISMATCH" },
+      });
+    });
+
+    it("should deny reusing a tenant A session for a tenant B request (x-tenant-id header)", async () => {
+      const headers = new Headers(tenantASessionHeaders);
+      headers.set("x-tenant-id", tenantB.id);
+      await expect(auth.api.getSession({ headers })).rejects.toMatchObject({
+        body: { code: "SESSION_TENANT_MISMATCH" },
+      });
+    });
+
+    it("should allow the tenant A session for its own tenant", async () => {
+      const headers = new Headers(tenantASessionHeaders);
+      headers.set("x-tenant-id", tenantA.id);
+      const session = await auth.api.getSession({ headers });
+      expect(session).toBeTruthy();
+      expect((session!.session as { tenantId?: string }).tenantId).toBe(tenantA.id);
+    });
+
+    it("should allow a platform session (null tenantId) to manage a tenant by id", async () => {
+      const owner = await auth.api.signUpEmail({
+        body: {
+          name: "Binding Owner",
+          email: "binding-owner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      const ownerHeaders = new Headers();
+      for (const [name, { value }] of parseSetCookieHeader(
+        owner.headers.get("set-cookie") || "",
+      ).entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      // Create is a platform-only endpoint (no target tenantId in the
+      // request), so it's never affected by session ↔ tenant binding.
+      const tenant = await auth.api.createTenant({
+        body: { name: "Binding Co", slug: "binding-co" },
+        headers: ownerHeaders,
+      });
+
+      // Member management passes a *target* tenantId while the caller's
+      // own session has a null tenantId — this must keep working.
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: tenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members).toHaveLength(1);
+      expect(members[0]!.userId).toBe(owner.response.user.id);
+    });
+  });
+
+  describe("session ↔ tenant binding with isPlatformRequest", async () => {
+    const { auth: boundAuth } = await getTestInstance(
+      {
+        emailAndPassword: { enabled: true },
+        plugins: [
+          tenantAuth({
+            canManageTenants: () => true,
+            isPlatformRequest: () => true,
+          }),
+        ],
+      },
+      {
+        clientOptions: {
+          plugins: [tenantAuthClient()],
+        },
+      },
+    );
+
+    it("should reject a tenant session on a request identified as platform-only", async () => {
+      const tenant = await boundAuth.api.createTenant({
+        body: { name: "Platform Bound", slug: "platform-bound" },
+      });
+      const signUp = await boundAuth.api.signUpEmailTenant({
+        body: {
+          tenantId: tenant.id,
+          name: "Tenant End User",
+          email: "enduser@platform-bound.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      const headers = new Headers();
+      for (const [name, { value }] of parseSetCookieHeader(
+        signUp.headers.get("set-cookie") || "",
+      ).entries()) {
+        headers.append("cookie", `${name}=${value}`);
+      }
+
+      await expect(boundAuth.api.getSession({ headers })).rejects.toMatchObject({
+        body: { code: "SESSION_TENANT_MISMATCH" },
+      });
+    });
   });
 
   describe("per-tenant OAuth configuration", () => {
@@ -315,6 +786,22 @@ describe("tenant-auth", async () => {
       expect(res.url).toBeDefined();
       const url = new URL(res.url!);
       expect(url.searchParams.get("client_id")).toBe("global-client-id");
+    });
+
+    it("should reject an untrusted errorCallbackURL on social sign-in", async () => {
+      await expect(
+        auth.api.signInSocialTenant({
+          body: {
+            tenantId: tenantA.id,
+            provider: "google",
+            callbackURL: "/dashboard",
+            errorCallbackURL: "https://evil.example",
+            disableRedirect: true,
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_CALLBACK_URL" },
+      });
     });
 
     it("should update an existing OAuth config", async () => {
@@ -478,6 +965,156 @@ describe("tenant-auth", async () => {
       await expect(auth.api.getTenant({ query: { id: tenant.id } })).rejects.toMatchObject({
         body: { code: "TENANT_NOT_FOUND" },
       });
+    });
+  });
+});
+
+describe("tenant-aware email verification", async () => {
+  const sendVerificationEmail = vi.fn();
+
+  const { auth: verifyAuth, customFetchImpl: verifyFetch } = await getTestInstance({
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+    },
+    emailVerification: {
+      sendOnSignUp: true,
+      sendVerificationEmail: async ({ user, url, token }) => {
+        sendVerificationEmail({ email: user.email, url, token });
+      },
+    },
+    plugins: [
+      tenantAuth({
+        canManageTenants: () => true,
+      }),
+    ],
+  });
+
+  const email = "verify-shared@example.com";
+  let tenantX: { id: string };
+  let tenantY: { id: string };
+  let tokenX: string;
+  let tokenY: string;
+
+  it("should send tenant-scoped verification links (not core /verify-email) for both tenants", async () => {
+    tenantX = await verifyAuth.api.createTenant({ body: { name: "Verify X", slug: "verify-x" } });
+    tenantY = await verifyAuth.api.createTenant({ body: { name: "Verify Y", slug: "verify-y" } });
+
+    sendVerificationEmail.mockClear();
+    await verifyAuth.api.signUpEmailTenant({
+      body: { tenantId: tenantX.id, name: "User X", email, password: "password-x" },
+    });
+    expect(sendVerificationEmail).toHaveBeenCalledTimes(1);
+    const urlX = sendVerificationEmail.mock.calls[0]![0].url as string;
+    expect(urlX).toContain("/tenant/verify-email?token=");
+    tokenX = new URL(urlX).searchParams.get("token")!;
+    expect(tokenX).toBeTruthy();
+
+    sendVerificationEmail.mockClear();
+    await verifyAuth.api.signUpEmailTenant({
+      body: { tenantId: tenantY.id, name: "User Y", email, password: "password-y" },
+    });
+    expect(sendVerificationEmail).toHaveBeenCalledTimes(1);
+    const urlY = sendVerificationEmail.mock.calls[0]![0].url as string;
+    expect(urlY).toContain("/tenant/verify-email?token=");
+    tokenY = new URL(urlY).searchParams.get("token")!;
+    expect(tokenY).toBeTruthy();
+    expect(tokenY).not.toBe(tokenX);
+  });
+
+  it("should verify only tenant X's user via /tenant/verify-email, leaving tenant Y's user untouched", async () => {
+    const result = await verifyAuth.api.verifyEmailTenant({ query: { token: tokenX } });
+    expect(result.status).toBe(true);
+
+    const ctx = await verifyAuth.$context;
+    const userX = await ctx.adapter.findOne<{ emailVerified: boolean }>({
+      model: "user",
+      where: [
+        { field: "email", value: email },
+        { field: "tenantId", value: tenantX.id },
+      ],
+    });
+    const userY = await ctx.adapter.findOne<{ emailVerified: boolean }>({
+      model: "user",
+      where: [
+        { field: "email", value: email },
+        { field: "tenantId", value: tenantY.id },
+      ],
+    });
+    expect(userX!.emailVerified).toBe(true);
+    expect(userY!.emailVerified).toBe(false);
+  });
+
+  it("should reject a tenant verification token replayed against core /verify-email", async () => {
+    await expect(verifyAuth.api.verifyEmail({ query: { token: tokenY } })).rejects.toMatchObject({
+      body: { code: "INVALID_VERIFICATION_TOKEN" },
+    });
+
+    const ctx = await verifyAuth.$context;
+    const userY = await ctx.adapter.findOne<{ emailVerified: boolean }>({
+      model: "user",
+      where: [
+        { field: "email", value: email },
+        { field: "tenantId", value: tenantY.id },
+      ],
+    });
+    expect(userY!.emailVerified).toBe(false);
+  });
+
+  it("should redirect to callbackURL with an error when a tenant token hits core /verify-email", async () => {
+    const response = await verifyFetch(
+      `http://localhost:3000/api/auth/verify-email?token=${tokenY}&callbackURL=${encodeURIComponent("/after-verify")}`,
+      { method: "GET", redirect: "manual" },
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("/after-verify?error=INVALID_VERIFICATION_TOKEN");
+  });
+
+  it("should reject a core verification token (no tenantId) at /tenant/verify-email", async () => {
+    const coreVerifyEmail = vi.fn();
+    const { auth: coreAuth } = await getTestInstance({
+      emailAndPassword: {
+        enabled: true,
+        requireEmailVerification: true,
+      },
+      emailVerification: {
+        sendOnSignUp: true,
+        sendVerificationEmail: async ({ url }) => {
+          coreVerifyEmail(url);
+        },
+      },
+      plugins: [tenantAuth({ canManageTenants: () => true })],
+    });
+
+    // Discard the verification email sent for `getTestInstance`'s own
+    // default test user before making the assertion below.
+    coreVerifyEmail.mockClear();
+    await coreAuth.api.signUpEmail({
+      body: { name: "Platform User", email: "core-only@example.com", password: "password" },
+    });
+    expect(coreVerifyEmail).toHaveBeenCalledTimes(1);
+    const coreURL = coreVerifyEmail.mock.calls[0]![0] as string;
+    expect(coreURL).toContain("/verify-email?token=");
+    const coreToken = new URL(coreURL).searchParams.get("token")!;
+
+    await expect(
+      coreAuth.api.verifyEmailTenant({ query: { token: coreToken } }),
+    ).rejects.toMatchObject({
+      body: { code: "INVALID_VERIFICATION_TOKEN" },
+    });
+  });
+
+  it("should treat an already-verified user as a no-op", async () => {
+    const result = await verifyAuth.api.verifyEmailTenant({ query: { token: tokenX } });
+    expect(result.status).toBe(true);
+    expect(result.user).toBeNull();
+  });
+
+  it("should reject an expired or malformed token", async () => {
+    await expect(
+      verifyAuth.api.verifyEmailTenant({ query: { token: "not-a-real-token" } }),
+    ).rejects.toMatchObject({
+      body: { code: "INVALID_TOKEN" },
     });
   });
 });

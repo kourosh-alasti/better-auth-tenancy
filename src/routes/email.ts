@@ -1,11 +1,16 @@
 import type { GenericEndpointContext } from "@better-auth/core";
 import type { Account, User } from "better-auth";
-import { APIError, createAuthEndpoint, createEmailVerificationToken } from "better-auth/api";
+import {
+  APIError,
+  createAuthEndpoint,
+  createEmailVerificationToken,
+  originCheck,
+} from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { TenantAuthOptions } from "./../types";
-import { requireTenant } from "./../utils";
+import { assertTrustedRedirectURL, isUniqueConstraintError, requireTenant } from "./../utils";
 
 const findTenantUserByEmail = async (
   ctx: GenericEndpointContext,
@@ -49,6 +54,7 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
           })
           .optional(),
       }),
+      use: [originCheck((ctx) => ctx.body?.callbackURL)],
       metadata: {
         openapi: {
           operationId: "tenantSignUpEmail",
@@ -60,6 +66,7 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
       if (ctx.context.options.emailAndPassword?.enabled === false) {
         throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.EMAIL_PASSWORD_NOT_ENABLED);
       }
+      assertTrustedRedirectURL(ctx, ctx.body.callbackURL);
       const tenant = await requireTenant(ctx, options);
       const { name, email, password, image, rememberMe } = ctx.body;
 
@@ -85,13 +92,21 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
       }
 
       const hash = await ctx.context.password.hash(password);
-      const createdUser = await ctx.context.internalAdapter.createUser({
-        email: normalizedEmail,
-        name,
-        image,
-        emailVerified: false,
-        tenantId: tenant.id,
-      });
+      let createdUser;
+      try {
+        createdUser = await ctx.context.internalAdapter.createUser({
+          email: normalizedEmail,
+          name,
+          image,
+          emailVerified: false,
+          tenantId: tenant.id,
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error)) {
+          throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.USER_ALREADY_EXISTS);
+        }
+        throw error;
+      }
       if (!createdUser) {
         throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
       }
@@ -115,9 +130,14 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
           createdUser.email,
           undefined,
           ctx.context.options.emailVerification?.expiresIn,
+          { tenantId: tenant.id },
         );
         const callbackURL = encodeURIComponent(ctx.body.callbackURL || "/");
-        const url = `${ctx.context.baseURL}/verify-email?token=${token}&callbackURL=${callbackURL}`;
+        // Tenant-scoped tokens must be verified by `/tenant/verify-email`,
+        // not core's `/verify-email` — core only looks up users by email
+        // and would verify the wrong user when the same email exists
+        // under multiple tenants.
+        const url = `${ctx.context.baseURL}/tenant/verify-email?token=${token}&callbackURL=${callbackURL}`;
         await ctx.context.runInBackgroundOrAwait(
           ctx.context.options.emailVerification.sendVerificationEmail(
             {
@@ -180,6 +200,7 @@ export const signInEmailTenant = (options?: TenantAuthOptions) =>
           })
           .optional(),
       }),
+      use: [originCheck((ctx) => ctx.body?.callbackURL)],
       metadata: {
         openapi: {
           operationId: "tenantSignInEmail",
@@ -191,6 +212,7 @@ export const signInEmailTenant = (options?: TenantAuthOptions) =>
       if (ctx.context.options.emailAndPassword?.enabled === false) {
         throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.EMAIL_PASSWORD_NOT_ENABLED);
       }
+      assertTrustedRedirectURL(ctx, ctx.body.callbackURL);
       const tenant = await requireTenant(ctx, options);
       const { email, password, rememberMe } = ctx.body;
 
@@ -230,9 +252,10 @@ export const signInEmailTenant = (options?: TenantAuthOptions) =>
             user.email,
             undefined,
             ctx.context.options.emailVerification?.expiresIn,
+            { tenantId: tenant.id },
           );
           const callbackURL = encodeURIComponent(ctx.body.callbackURL || "/");
-          const url = `${ctx.context.baseURL}/verify-email?token=${token}&callbackURL=${callbackURL}`;
+          const url = `${ctx.context.baseURL}/tenant/verify-email?token=${token}&callbackURL=${callbackURL}`;
           await ctx.context.runInBackgroundOrAwait(
             ctx.context.options.emailVerification.sendVerificationEmail(
               {
@@ -258,6 +281,7 @@ export const signInEmailTenant = (options?: TenantAuthOptions) =>
       await setSessionCookie(ctx, { session, user }, rememberMe === false);
 
       if (ctx.body.callbackURL) {
+        assertTrustedRedirectURL(ctx, ctx.body.callbackURL);
         ctx.setHeader("Location", ctx.body.callbackURL);
       }
 

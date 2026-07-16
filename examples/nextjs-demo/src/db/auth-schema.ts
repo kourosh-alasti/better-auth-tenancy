@@ -1,5 +1,5 @@
-import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const user = pgTable(
   "user",
@@ -18,7 +18,17 @@ export const user = pgTable(
       onDelete: "cascade",
     }),
   },
-  (table) => [index("user_tenantId_idx").on(table.tenantId)],
+  (table) => [
+    index("user_tenantId_idx").on(table.tenantId),
+    // Platform users (tenantId null): email unique globally
+    uniqueIndex("user_email_platform_unique")
+      .on(table.email)
+      .where(sql`${table.tenantId} IS NULL`),
+    // Tenant users: email unique per tenant
+    uniqueIndex("user_email_tenant_unique")
+      .on(table.email, table.tenantId)
+      .where(sql`${table.tenantId} IS NOT NULL`),
+  ],
 );
 
 export const session = pgTable(
@@ -96,17 +106,44 @@ export const verification = pgTable(
   ],
 );
 
-export const tenant = pgTable("tenant", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  metadata: text("metadata"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
-    .notNull(),
-});
+export const tenant = pgTable(
+  "tenant",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    ownerId: text("owner_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    metadata: text("metadata"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("tenant_ownerId_idx").on(table.ownerId)],
+);
+
+export const tenantMember = pgTable(
+  "tenant_member",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenant.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("tenantMember_tenantId_idx").on(table.tenantId),
+    index("tenantMember_userId_idx").on(table.userId),
+    uniqueIndex("tenant_member_tenant_user_unique").on(table.tenantId, table.userId),
+  ],
+);
 
 export const tenantOauthConfig = pgTable(
   "tenant_oauth_config",
@@ -127,7 +164,10 @@ export const tenantOauthConfig = pgTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  (table) => [index("tenantOauthConfig_tenantId_idx").on(table.tenantId)],
+  (table) => [
+    index("tenantOauthConfig_tenantId_idx").on(table.tenantId),
+    uniqueIndex("tenant_oauth_tenant_provider_unique").on(table.tenantId, table.providerId),
+  ],
 );
 
 export const userRelations = relations(user, ({ one, many }) => ({
@@ -137,6 +177,7 @@ export const userRelations = relations(user, ({ one, many }) => ({
   }),
   sessions: many(session),
   accounts: many(account),
+  tenantMemberships: many(tenantMember),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -161,11 +202,27 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
-export const tenantRelations = relations(tenant, ({ many }) => ({
+export const tenantRelations = relations(tenant, ({ many, one }) => ({
+  owner: one(user, {
+    fields: [tenant.ownerId],
+    references: [user.id],
+  }),
   users: many(user),
   sessions: many(session),
   accounts: many(account),
+  members: many(tenantMember),
   tenantOauthConfigs: many(tenantOauthConfig),
+}));
+
+export const tenantMemberRelations = relations(tenantMember, ({ one }) => ({
+  tenant: one(tenant, {
+    fields: [tenantMember.tenantId],
+    references: [tenant.id],
+  }),
+  user: one(user, {
+    fields: [tenantMember.userId],
+    references: [user.id],
+  }),
 }));
 
 export const tenantOauthConfigRelations = relations(tenantOauthConfig, ({ one }) => ({

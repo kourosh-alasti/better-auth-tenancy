@@ -2,18 +2,20 @@ import type { GenericEndpointContext } from "@better-auth/core";
 import type { OAuth2Tokens } from "@better-auth/core/oauth2";
 import type { Account, User } from "better-auth";
 import { generateState, parseState } from "better-auth";
-import { APIError, createAuthEndpoint } from "better-auth/api";
+import { APIError, createAuthEndpoint, originCheck } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import { setTokenUtil } from "better-auth/oauth2";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { TenantAuthOptions, TenantOAuthConfig } from "./../types";
 import {
+  assertCanManageTenant,
+  assertTrustedRedirectURL,
   decryptCredential,
   encryptCredential,
   findTenantOAuthConfig,
-  requireManagementAccess,
   requireTenant,
+  resolveManagementAccess,
   resolveTenantProvider,
 } from "./../utils";
 
@@ -79,8 +81,9 @@ export const registerTenantOAuthConfig = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      await assertCanManageTenant(ctx, access, tenant, "admin");
       const existing = await findTenantOAuthConfig(ctx, tenant.id, ctx.body.providerId);
       // Credentials are encrypted at rest with the auth secret.
       const data = {
@@ -132,8 +135,9 @@ export const listTenantOAuthConfigs = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      await assertCanManageTenant(ctx, access, tenant, "admin");
       const configs = await ctx.context.adapter.findMany<TenantOAuthConfig>({
         model: "tenantOauthConfig",
         where: [{ field: "tenantId", value: tenant.id }],
@@ -160,8 +164,9 @@ export const deleteTenantOAuthConfig = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
-      await requireManagementAccess(ctx, options);
+      const access = await resolveManagementAccess(ctx, options);
       const tenant = await requireTenant(ctx, options);
+      await assertCanManageTenant(ctx, access, tenant, "admin");
       const existing = await findTenantOAuthConfig(ctx, tenant.id, ctx.body.providerId);
       if (!existing) {
         throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.OAUTH_CONFIG_NOT_FOUND);
@@ -227,6 +232,7 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
           })
           .optional(),
       }),
+      use: [originCheck((ctx) => ctx.body?.callbackURL)],
       metadata: {
         openapi: {
           operationId: "tenantSignInSocial",
@@ -235,6 +241,9 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
       },
     },
     async (ctx) => {
+      assertTrustedRedirectURL(ctx, ctx.body.callbackURL, "callbackURL");
+      assertTrustedRedirectURL(ctx, ctx.body.newUserCallbackURL, "newUserCallbackURL");
+      assertTrustedRedirectURL(ctx, ctx.body.errorCallbackURL, "errorCallbackURL");
       const tenant = await requireTenant(ctx, options);
       const { provider, redirectURI } = await resolveTenantProvider(
         ctx,
@@ -461,6 +470,14 @@ export const callbackTenantOAuth = (_options?: TenantAuthOptions) =>
       }
       await setSessionCookie(ctx, { session, user });
 
-      throw ctx.redirect(isRegister ? newUserURL || callbackURL : callbackURL);
+      // State values are validated when the flow starts (see
+      // signInSocialTenant), but re-check at the redirect itself since
+      // state is attacker-observable and shouldn't be trusted blindly.
+      const targetURL = isRegister ? newUserURL || callbackURL : callbackURL;
+      if (!ctx.context.isTrustedOrigin(targetURL, { allowRelativePaths: true })) {
+        ctx.context.logger.error(`Invalid callback target: ${targetURL}`);
+        redirectOnError(ctx, resolvedErrorURL, "invalid_callback_url");
+      }
+      throw ctx.redirect(targetURL);
     },
   );

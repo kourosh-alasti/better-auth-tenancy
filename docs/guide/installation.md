@@ -55,7 +55,8 @@ The client plugin registers path methods and session listeners for tenant sign-i
 
 The plugin extends your Better Auth schema with:
 
-- `tenant` — tenant records
+- `tenant` — tenant records (includes `ownerId`)
+- `tenantMember` — platform-user roles on a tenant
 - `tenantOauthConfig` — per-tenant OAuth credentials
 - `tenantId` on `user`, `session`, `account`, and `verification`
 
@@ -66,7 +67,14 @@ npx @better-auth/cli generate
 # then push or migrate with your ORM
 ```
 
-By default the plugin removes the global unique constraint on `user.email` so the same address can exist under different tenants. Set `keepEmailGloballyUnique: true` if you want one email to map to a single tenant globally.
+By default the plugin removes the global unique constraint on `user.email` so the same address can exist under different tenants. **Add composite / partial unique indexes yourself** (Better Auth cannot emit them):
+
+- Platform: unique `email` where `tenant_id IS NULL`
+- Tenant users: unique `(email, tenant_id)` where `tenant_id IS NOT NULL`
+- OAuth configs: unique `(tenant_id, provider_id)`
+- Members: unique `(tenant_id, user_id)`
+
+See [Schema](/api/schema) for SQL examples. Set `keepEmailGloballyUnique: true` if you want one email to map to a single user globally.
 
 ## Verify the setup
 

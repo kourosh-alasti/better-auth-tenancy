@@ -3,6 +3,14 @@ import type { BetterAuthPluginDBSchema } from "@better-auth/core/db";
 import type { Awaitable } from "better-auth";
 
 /**
+ * Platform-user roles on a tenant (who may manage the tenant, not
+ * end-users who authenticate under that tenant).
+ *
+ * Hierarchy: owner > admin > member
+ */
+export type TenantRole = "owner" | "admin" | "member";
+
+/**
  * A tenant record.
  */
 export interface Tenant {
@@ -16,11 +24,28 @@ export interface Tenant {
    */
   slug: string;
   /**
+   * Primary platform owner. Set on create from the authenticated
+   * session. Kept in sync with a `tenantMember` row of role `owner`.
+   * `null` when created by a global admin without a session.
+   */
+  ownerId?: string | null | undefined;
+  /**
    * Arbitrary JSON-serialized metadata.
    */
   metadata?: string | null | undefined;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * A platform user membership on a tenant.
+ */
+export interface TenantMember {
+  id: string;
+  tenantId: string;
+  userId: string;
+  role: TenantRole;
+  createdAt: Date;
 }
 
 /**
@@ -74,20 +99,53 @@ export interface TenantAuthOptions {
   /**
    * By default the plugin removes the global unique constraint on
    * `user.email` so the same email can sign up under different
-   * tenants. Set this to `true` to keep emails globall unique
+   * tenants. Set this to `true` to keep emails globally unique
    * (one email = one tenant).
    *
    * @default false
    */
   keepEmailGloballyUnique?: boolean | undefined;
   /**
-   * Authorize tenant and OAuth-config management requests
-   * (create/update/delete tenants and OAuth configs).
+   * Global admin bypass for tenant and OAuth-config management.
    *
-   * When provided, this fully replaces the default check (which
-   * requires an authenticated session). Return `false` to deny.
+   * When this returns `true`, the caller can manage every tenant.
+   * When it returns `false` or is omitted, access falls through to
+   * membership: a platform session (`user.tenantId` null) may create
+   * tenants and manage those where they are a member with a sufficient
+   * role.
+   *
+   * Use for operator API keys / super-admin checks.
    */
   canManageTenants?: ((ctx: GenericEndpointContext) => Awaitable<boolean>) | undefined;
+  /**
+   * Identifies platform-host requests (e.g. by comparing the request
+   * host against your platform domain). Used by the session ↔ request
+   * tenant-binding check: when this returns `true`, a session carrying
+   * a tenant id is rejected, since tenant sessions must not be usable
+   * on the platform host.
+   *
+   * Omit this if you don't need platform-host enforcement — tenant
+   * mismatch enforcement (see `enforceSessionTenant`) still applies.
+   */
+  isPlatformRequest?: ((ctx: GenericEndpointContext) => Awaitable<boolean>) | undefined;
+  /**
+   * Enforces that an existing session matches the tenant (or platform)
+   * context of the request it's used with:
+   *
+   * 1. If a tenant can be resolved for the request, the session's
+   *    tenant id (`session.tenantId`, falling back to `user.tenantId`)
+   *    must equal it.
+   * 2. If `isPlatformRequest` resolves to `true`, the session must not
+   *    carry a tenant id.
+   * 3. If neither can be determined, nothing is enforced.
+   *
+   * Mismatches are rejected with `SESSION_TENANT_MISMATCH`. This
+   * prevents a session issued under one tenant host (or the platform
+   * host) from being replayed against another.
+   *
+   * @default true
+   */
+  enforceSessionTenant?: boolean | undefined;
   /**
    * Custom schema for the plugin (rename models/fields).
    */
