@@ -26,6 +26,10 @@ function formatError(error: unknown): string {
   return "Something went wrong";
 }
 
+function unpackList<T>(list: T[] | { data: T[] }): T[] {
+  return Array.isArray(list) ? list : list.data;
+}
+
 export async function createTenantAction(formData: FormData) {
   const name = String(formData.get("name") ?? "");
   const slug = String(formData.get("slug") ?? "");
@@ -132,7 +136,8 @@ export async function deleteOAuthConfigAction(formData: FormData) {
 }
 
 export async function listTenants(): Promise<Tenant[]> {
-  return auth.api.listTenants({ headers: adminHeaders() });
+  const tenants = await auth.api.listTenants({ headers: adminHeaders() });
+  return unpackList(tenants);
 }
 
 export async function listOAuthConfigs(tenantId: string) {
