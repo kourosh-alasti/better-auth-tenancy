@@ -1,4 +1,5 @@
 import { relations, sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { boolean, index, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const user = pgTable(
@@ -14,7 +15,7 @@ export const user = pgTable(
       .defaultNow()
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
-    tenantId: text("tenant_id").references(() => tenant.id, {
+    tenantId: text("tenant_id").references((): AnyPgColumn => tenant.id, {
       onDelete: "cascade",
     }),
   },
@@ -112,7 +113,7 @@ export const tenant = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     slug: text("slug").notNull().unique(),
-    ownerId: text("owner_id").references(() => user.id, {
+    ownerId: text("owner_id").references((): AnyPgColumn => user.id, {
       onDelete: "set null",
     }),
     metadata: text("metadata"),
