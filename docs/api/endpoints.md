@@ -140,7 +140,7 @@ Remove a member. Requires `admin` or higher. Admins cannot remove owners/admins.
 
 ## Invites
 
-Manage invites for tenant end-user email sign-up. Requires `admin` role or higher (or global admin). When `requireInviteForTenantSignUp` is enabled, sign-up must include a matching `inviteToken`.
+Manage invites for tenant end-user email and first-time OAuth registration. Requires `admin` role or higher (or global admin). When `requireInviteForTenantSignUp` is enabled, registration must include a matching `inviteToken`.
 
 ### `POST /tenant/invite/create`
 
@@ -298,14 +298,20 @@ Start OAuth sign-in for a tenant.
 
 **Body**
 
-| Field              | Type     | Required | Description      |
-| ------------------ | -------- | -------- | ---------------- |
-| `tenantId`         | `string` | no\*     | Tenant id        |
-| `provider`         | `string` | yes      | Provider id      |
-| `callbackURL`      | `string` | no       | Success redirect |
-| `errorCallbackURL` | `string` | no       | Error redirect   |
+| Field                | Type      | Required | Description                                                              |
+| -------------------- | --------- | -------- | ------------------------------------------------------------------------ |
+| `tenantId`           | `string`  | no\*     | Tenant id                                                                |
+| `provider`           | `string`  | yes      | Provider id                                                              |
+| `callbackURL`        | `string`  | no       | Success redirect                                                         |
+| `newUserCallbackURL` | `string`  | no       | Redirect for newly registered users                                      |
+| `errorCallbackURL`   | `string`  | no       | Error redirect                                                           |
+| `inviteToken`        | `string`  | no\*     | Required for first-time registration when invite-only sign-up is enabled |
+| `requestSignUp`      | `boolean` | no       | Explicitly request sign-up                                               |
+| `disableRedirect`    | `boolean` | no       | Return the URL instead of redirecting                                    |
 
-**Response:** Redirect to OAuth provider
+**Response:** Redirect to OAuth provider (or `{ url, redirect }` when `disableRedirect` is true)
+
+First-time social registration honors `requireInviteForTenantSignUp` / `allowedEmailDomains` the same way as email sign-up. Existing OAuth users can sign in without an invite.
 
 ---
 

@@ -137,13 +137,18 @@ Set this to `true` only if your tenant `metadata` contains nothing sensitive and
 
 ## `requireInviteForTenantSignUp`
 
-When `true`, tenant email sign-up (`POST /tenant/sign-up/email`) requires a valid invite token in the `inviteToken` body field. Invites are created by tenant admins/owners via `POST /tenant/invite/create` and are single-use.
+When `true`, **new** tenant end-user registration requires a valid invite token matching the email:
+
+- Email: pass `inviteToken` on `POST /tenant/sign-up/email`
+- Social/OAuth: pass `inviteToken` on `POST /tenant/sign-in/social` (carried through OAuth state and enforced at callback when creating a new user)
+
+Existing users may still sign in without an invite. Invites are created by tenant admins/owners via `POST /tenant/invite/create` and are single-use.
 
 Default: `false` (open sign-up when no other policy applies).
 
 ## `allowedEmailDomains`
 
-Restrict tenant email sign-up to specific email domains. Ignored when `requireInviteForTenantSignUp` is `true`.
+Restrict **new** tenant end-user registration (email and first-time social/OAuth) to specific email domains. Ignored when `requireInviteForTenantSignUp` is `true`.
 
 Pass a static list or a per-tenant resolver:
 

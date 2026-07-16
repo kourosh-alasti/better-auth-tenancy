@@ -7,10 +7,12 @@ import { setSessionCookie } from "better-auth/cookies";
 import { setTokenUtil } from "better-auth/oauth2";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
-import type { TenantAuthOptions, TenantOAuthConfig } from "./../types";
+import type { Tenant, TenantAuthOptions, TenantOAuthConfig } from "./../types";
 import {
   assertCanManageTenant,
+  assertTenantSignUpAllowed,
   assertTrustedRedirectURL,
+  consumeTenantInvite,
   decryptCredential,
   encryptCredential,
   findTenantOAuthConfig,
@@ -231,6 +233,13 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
           })
           .optional(),
         requestSignUp: z.boolean().meta({ description: "Explicitly request sign-up" }).optional(),
+        inviteToken: z
+          .string()
+          .meta({
+            description:
+              "Invite token required for first-time social sign-up when invite-only registration is enabled",
+          })
+          .optional(),
         loginHint: z
           .string()
           .meta({
@@ -251,6 +260,16 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
       assertTrustedRedirectURL(ctx, ctx.body.newUserCallbackURL, "newUserCallbackURL");
       assertTrustedRedirectURL(ctx, ctx.body.errorCallbackURL, "errorCallbackURL");
       const tenant = await requireTenant(ctx, options);
+      // Fail fast when invite-only registration is enabled and this request
+      // is asking to create a new user without an invite token. Existing
+      // users can still sign in without one (enforced again at callback).
+      if (
+        options?.requireInviteForTenantSignUp &&
+        ctx.body.requestSignUp &&
+        !ctx.body.inviteToken
+      ) {
+        throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_REQUIRED);
+      }
       const { provider, redirectURI } = await resolveTenantProvider(
         ctx,
         tenant.id,
@@ -259,6 +278,7 @@ export const signInSocialTenant = (options?: TenantAuthOptions) =>
       );
       const { codeVerifier, state } = await generateState(ctx, undefined, {
         tenantId: tenant.id,
+        ...(ctx.body.inviteToken ? { inviteToken: ctx.body.inviteToken } : {}),
       });
       const url = await provider.createAuthorizationURL({
         state,
@@ -325,6 +345,9 @@ export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
       const parsedState = await parseState(ctx);
       const { callbackURL, codeVerifier, errorURL, newUserURL, requestSignUp } = parsedState;
       const tenantId = (parsedState as Record<string, unknown>).tenantId as string | undefined;
+      const inviteToken = (parsedState as Record<string, unknown>).inviteToken as
+        | string
+        | undefined;
       const resolvedErrorURL = errorURL || defaultErrorURL;
 
       if (error) {
@@ -449,6 +472,40 @@ export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
           if (provider.disableImplicitSignUp && !requestSignUp) {
             redirectOnError(ctx, resolvedErrorURL, "signup_disabled");
           }
+          // New end-user registration via OAuth must honor the same invite /
+          // domain policy as email sign-up.
+          let pendingInvite: Awaited<ReturnType<typeof assertTenantSignUpAllowed>> = null;
+          try {
+            const tenant = await ctx.context.adapter.findOne<Tenant>({
+              model: "tenant",
+              where: [{ field: "id", value: tenantId }],
+            });
+            if (!tenant) {
+              redirectOnError(ctx, resolvedErrorURL, "tenant_not_found");
+            }
+            pendingInvite = await assertTenantSignUpAllowed(
+              ctx,
+              options,
+              tenant,
+              email,
+              inviteToken,
+            );
+          } catch (e) {
+            if (isAPIError(e)) {
+              const code = e.body?.code;
+              if (code === "INVITE_REQUIRED") {
+                redirectOnError(ctx, resolvedErrorURL, "invite_required");
+              }
+              if (code === "INVITE_INVALID" || code === "INVITE_EXPIRED") {
+                redirectOnError(ctx, resolvedErrorURL, "invite_invalid");
+              }
+              if (code === "EMAIL_DOMAIN_NOT_ALLOWED") {
+                redirectOnError(ctx, resolvedErrorURL, "email_domain_not_allowed");
+              }
+            }
+            ctx.context.logger.error("Tenant sign-up policy rejected OAuth registration", e);
+            redirectOnError(ctx, resolvedErrorURL, "signup_not_allowed");
+          }
           isRegister = true;
           try {
             user = await ctx.context.internalAdapter.createUser({
@@ -465,6 +522,9 @@ export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
               ...freshTokens,
               tenantId,
             });
+            if (pendingInvite) {
+              await consumeTenantInvite(ctx, pendingInvite);
+            }
           } catch (e) {
             ctx.context.logger.error("Unable to create user", e);
             redirectOnError(ctx, resolvedErrorURL, "unable_to_create_user");
