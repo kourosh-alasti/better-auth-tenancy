@@ -1,20 +1,28 @@
 # Tenant management
 
-The plugin exposes CRUD endpoints for tenants.
+The plugin exposes CRUD endpoints for tenants and platform-user memberships.
 
 ## Authorization
 
 Management access is resolved in this order:
 
 1. **`canManageTenants` returns `true`** — global admin (e.g. operator API key). Can create and manage every tenant.
-2. **Authenticated platform user** — a session whose `user.tenantId` is null. Can create tenants (and becomes their owner) and manage only tenants they own.
-3. **Otherwise** — denied. Any authenticated session is no longer enough.
+2. **Authenticated platform user** — a session whose `user.tenantId` is null. Access is scoped by **membership role**.
+3. **Otherwise** — denied.
 
 Tenant end-users (`user.tenantId` set) cannot create or manage tenants.
 
-## Create a tenant
+### Roles
 
-As a platform user (core Better Auth session on `app.com`):
+| Role     | Update tenant | Delete tenant | OAuth configs | Manage members           |
+| -------- | ------------- | ------------- | ------------- | ------------------------ |
+| `owner`  | yes           | yes           | yes           | yes (any role)           |
+| `admin`  | yes           | no            | yes           | add/remove `member` only |
+| `member` | no            | no            | no            | list members only        |
+
+Creating a tenant attaches the platform user as `owner` (`ownerId` + `tenantMember` row).
+
+## Create a tenant
 
 ```ts
 const { data: tenant } = await authClient.$fetch("/tenant/create", {
@@ -22,64 +30,55 @@ const { data: tenant } = await authClient.$fetch("/tenant/create", {
   body: {
     name: "Acme Corp",
     slug: "acme",
-    metadata: { plan: "pro" }, // optional, stored as JSON string
+    metadata: { plan: "pro" },
   },
 });
 // tenant.ownerId === current platform user id
 ```
 
-Or via a global admin key:
+## Members
 
 ```ts
-await auth.api.createTenant({
-  body: { name: "Acme Corp", slug: "acme" },
-  headers: { "x-admin-key": process.env.ADMIN_SECRET },
+// Add by user id or email (platform users only)
+await auth.api.addTenantMember({
+  body: { tenantId: tenant.id, email: "partner@platform.com", role: "admin" },
+  headers,
 });
-// ownerId is null when no platform session is present
+
+await auth.api.listTenantMembers({
+  query: { tenantId: tenant.id },
+  headers,
+});
+
+await auth.api.updateTenantMember({
+  body: { tenantId: tenant.id, userId: "...", role: "member" },
+  headers,
+});
+
+await auth.api.removeTenantMember({
+  body: { tenantId: tenant.id, userId: "..." },
+  headers,
+});
 ```
 
-## Get a tenant
+The last `owner` cannot be removed or demoted.
 
-Look up by id or slug (public):
+## Get / list / update / delete
 
-```ts
-await authClient.$fetch("/tenant/get?slug=acme");
-// or
-await authClient.$fetch("/tenant/get?id=<tenant-id>");
-```
-
-## List tenants
-
-- Global admin: all tenants
-- Platform owner: only tenants where `ownerId` matches the session user
-
-```ts
-await authClient.$fetch("/tenant/list");
-```
-
-## Update a tenant
-
-Requires ownership or global admin.
+- **Get** by id or slug is public.
+- **List** returns all tenants for global admin; otherwise tenants the caller is a member of.
+- **Update** requires `admin` or higher.
+- **Delete** requires `owner` (or global admin). Cascades related users, sessions, accounts, members, and OAuth configs.
 
 ```ts
 await authClient.$fetch("/tenant/update", {
   method: "POST",
   body: {
     id: "<tenant-id>",
-    data: {
-      name: "Acme Inc",
-      slug: "acme-inc", // optional
-      metadata: { plan: "enterprise" }, // optional
-    },
+    data: { name: "Acme Inc", slug: "acme-inc" },
   },
 });
-```
 
-## Delete a tenant
-
-Requires ownership or global admin. Cascades to related users, sessions, accounts, and OAuth configs (via foreign key references).
-
-```ts
 await authClient.$fetch("/tenant/delete", {
   method: "POST",
   body: { id: "<tenant-id>" },
@@ -88,14 +87,24 @@ await authClient.$fetch("/tenant/delete", {
 
 ## Tenant model
 
-| Field       | Type     | Description                                        |
-| ----------- | -------- | -------------------------------------------------- |
-| `id`        | `string` | Unique identifier                                  |
-| `name`      | `string` | Display name                                       |
-| `slug`      | `string` | URL-friendly unique identifier                     |
-| `ownerId`   | `string` | Platform user who owns the tenant (`null` if none) |
-| `metadata`  | `string` | Optional JSON-serialized metadata                  |
-| `createdAt` | `Date`   | Creation timestamp                                 |
-| `updatedAt` | `Date`   | Last update timestamp                              |
+| Field       | Type     | Description                             |
+| ----------- | -------- | --------------------------------------- |
+| `id`        | `string` | Unique identifier                       |
+| `name`      | `string` | Display name                            |
+| `slug`      | `string` | URL-friendly unique identifier          |
+| `ownerId`   | `string` | Primary platform owner (`null` if none) |
+| `metadata`  | `string` | Optional JSON-serialized metadata       |
+| `createdAt` | `Date`   | Creation timestamp                      |
+| `updatedAt` | `Date`   | Last update timestamp                   |
+
+## Member model
+
+| Field       | Type     | Description                    |
+| ----------- | -------- | ------------------------------ |
+| `id`        | `string` | Unique identifier              |
+| `tenantId`  | `string` | Tenant                         |
+| `userId`    | `string` | Platform user                  |
+| `role`      | `string` | `owner` \| `admin` \| `member` |
+| `createdAt` | `Date`   | Creation timestamp             |
 
 See [Endpoints](/api/endpoints) for full request/response details.

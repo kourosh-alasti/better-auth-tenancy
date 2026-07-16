@@ -5,6 +5,7 @@
 ## What it provides
 
 - A **`tenant` table** (with `ownerId`) and CRUD endpoints for tenant management
+- **`tenantMember`** roles (`owner` / `admin` / `member`) for platform collaborators
 - A **`tenantId` column** on `user`, `session`, `account`, and `verification`
 - **Platform vs tenant auth** — core routes for platform users on `app.com`; `/tenant/*` for tenant end-users
 - **Tenant-scoped sign-up and sign-in** so the same email can exist under different tenants

@@ -64,7 +64,7 @@ When `true`, emails remain globally unique — one email maps to one user across
 
 Global admin bypass for tenant and OAuth-config management.
 
-When this returns `true`, the caller can manage every tenant. When it returns `false` or is omitted, access falls through to **ownership**: an authenticated platform user (`user.tenantId` null) may create tenants and manage only those they own.
+When this returns `true`, the caller can manage every tenant. When it returns `false` or is omitted, access falls through to **membership**: an authenticated platform user (`user.tenantId` null) may create tenants (becoming `owner`) and manage tenants according to their role (`owner` / `admin` / `member`).
 
 Tenant end-users and unauthenticated callers are denied. There is no “any session is admin” default.
 
@@ -84,8 +84,10 @@ await auth.api.createTenant({
   body: { name: "Acme", slug: "acme" },
   headers, // session cookie
 });
-// → tenant.ownerId === session.user.id
+// → tenant.ownerId === session.user.id + tenantMember role owner
 ```
+
+See [Tenant management](/guide/tenant-management) for the role permission matrix.
 
 ## `schema`
 
