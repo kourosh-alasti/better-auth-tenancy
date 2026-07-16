@@ -1,69 +1,60 @@
 /**
- * Postgres-backed integration tests.
+ * Postgres + Drizzle integration tests.
  *
- * Requires a local Postgres matching Better Auth's test helper defaults:
- *   postgres://user:password@localhost:5432/better_auth
+ * Uses the production-shaped schema (including composite/partial unique
+ * indexes) instead of Better Auth's built-in Kysely migrator, which cannot
+ * order the circular tenant ↔ user foreign keys.
  *
- * Skip locally unless TEST_POSTGRES=1. CI runs this job with a Postgres service.
+ * Requires:
+ *   DATABASE_URL=postgres://user:password@localhost:5432/better_auth
+ *   TEST_POSTGRES=1
  */
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { parseSetCookieHeader } from "better-auth/cookies";
-import { getTestInstance } from "better-auth/test";
-import { sql } from "kysely";
-import { describe, expect, it } from "vite-plus/test";
+import { pushSchema } from "drizzle-kit/api";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { tenantAuth } from "../src/index";
-import { tenantAuthClient } from "../src/client";
+import * as schema from "./pg/schema";
 
 const runPostgres = process.env.TEST_POSTGRES === "1";
-
-type KyselyLike = {
-  executeQuery?: (query: { sql: string; parameters: unknown[] }) => Promise<unknown>;
-  destroy?: () => Promise<void>;
-};
-
-async function applyCompositeIndexes(
-  auth: Awaited<ReturnType<typeof getTestInstance>>["auth"],
-): Promise<void> {
-  const database = auth.options.database as { db?: KyselyLike; type?: string } | undefined;
-  const db = database?.db;
-  if (!db) {
-    throw new Error("Expected Better Auth postgres test helper to expose a Kysely db");
-  }
-
-  // Better Auth's default migrations keep camelCase column/table names.
-  // These are the indexes apps must add manually (see docs/api/schema.md).
-  const statements = [
-    `CREATE UNIQUE INDEX IF NOT EXISTS user_email_platform_unique ON "user" (email) WHERE "tenantId" IS NULL`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS user_email_tenant_unique ON "user" (email, "tenantId") WHERE "tenantId" IS NOT NULL`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS tenant_member_tenant_user_unique ON "tenantMember" ("tenantId", "userId")`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS tenant_oauth_tenant_provider_unique ON "tenantOauthConfig" ("tenantId", "providerId")`,
-  ];
-
-  for (const statement of statements) {
-    await sql.raw(statement).execute(db as never);
-  }
-}
+const connectionString =
+  process.env.DATABASE_URL ?? "postgres://user:password@localhost:5432/better_auth";
 
 describe.runIf(runPostgres)("postgres integration", async () => {
-  const { auth } = await getTestInstance(
-    {
-      emailAndPassword: { enabled: true },
-      plugins: [
-        tenantAuth({
-          canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
-        }),
-      ],
-    },
-    {
-      testWith: "postgres",
-      clientOptions: { plugins: [tenantAuthClient()] },
-      disableTestUser: true,
-    },
-  );
+  const client = postgres(connectionString, { max: 1 });
+  const db = drizzle(client, { schema });
+
+  // Dedicated CI database — reset so indexes/tables match this schema.
+  await client.unsafe(`DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`);
+
+  const { apply } = await pushSchema(schema, db as never);
+  await apply();
+
+  const auth = betterAuth({
+    baseURL: "http://localhost:3000",
+    secret: "better-auth-secret-that-is-long-enough-for-validation-test",
+    database: drizzleAdapter(db, {
+      provider: "pg",
+      schema,
+    }),
+    emailAndPassword: { enabled: true },
+    rateLimit: { enabled: false },
+    plugins: [
+      tenantAuth({
+        canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+      }),
+    ],
+  });
 
   const adminHeaders = new Headers({ "x-admin": "1" });
 
-  await applyCompositeIndexes(auth);
+  afterAll(async () => {
+    await client.end({ timeout: 5 });
+  });
 
   it("creates a tenant and owner membership transactionally", async () => {
     const owner = await auth.api.signUpEmail({
