@@ -6,8 +6,10 @@ import {
   assertCanManageTenant,
   assertValidSlug,
   canViewTenantDetails,
-  createOwnerMembership,
+  createTenantWithOwner,
   listAccessibleTenantIds,
+  listWithPagination,
+  MAX_LIST_LIMIT,
   resolveManagementAccess,
   toPublicTenant,
 } from "./../utils";
@@ -49,9 +51,9 @@ export const createTenant = (options?: TenantAuthOptions) =>
       if (existing) {
         throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.TENANT_ALREADY_EXISTS);
       }
-      const tenant = await ctx.context.adapter.create<Omit<Tenant, "id">, Tenant>({
-        model: "tenant",
-        data: {
+      const tenant = await createTenantWithOwner(
+        ctx,
+        {
           name: ctx.body.name,
           slug: ctx.body.slug,
           ownerId: access.userId,
@@ -59,10 +61,8 @@ export const createTenant = (options?: TenantAuthOptions) =>
           createdAt: new Date(),
           updatedAt: new Date(),
         },
-      });
-      if (access.userId) {
-        await createOwnerMembership(ctx, tenant.id, access.userId);
-      }
+        access.userId,
+      );
       return ctx.json(tenant);
     },
   );
@@ -113,6 +113,23 @@ export const listTenants = (options?: TenantAuthOptions) =>
     {
       method: "GET",
       operationId: "listTenants",
+      query: z
+        .object({
+          limit: z.coerce
+            .number()
+            .int()
+            .min(1)
+            .max(MAX_LIST_LIMIT)
+            .meta({ description: "Maximum number of tenants to return" })
+            .optional(),
+          offset: z.coerce
+            .number()
+            .int()
+            .min(0)
+            .meta({ description: "Number of tenants to skip" })
+            .optional(),
+        })
+        .default({}),
       metadata: {
         openapi: {
           operationId: "listTenants",
@@ -122,22 +139,35 @@ export const listTenants = (options?: TenantAuthOptions) =>
     },
     async (ctx) => {
       const access = await resolveManagementAccess(ctx, options);
+      const sortBy = { field: "createdAt", direction: "desc" as const };
+      const pagination = { limit: ctx.query.limit, offset: ctx.query.offset };
+
       if (access.kind === "global") {
-        const tenants = await ctx.context.adapter.findMany<Tenant>({
-          model: "tenant",
-        });
-        return ctx.json(tenants);
+        return ctx.json(
+          await listWithPagination<Tenant>(ctx, {
+            model: "tenant",
+            sortBy,
+            ...pagination,
+          }),
+        );
       }
 
       const tenantIds = await listAccessibleTenantIds(ctx, access.userId);
       if (tenantIds.length === 0) {
+        if (pagination.limit !== undefined || (pagination.offset ?? 0) > 0) {
+          return ctx.json({ data: [], total: 0 });
+        }
         return ctx.json([]);
       }
-      const tenants = await ctx.context.adapter.findMany<Tenant>({
-        model: "tenant",
-        where: [{ field: "id", value: tenantIds, operator: "in" }],
-      });
-      return ctx.json(tenants);
+
+      return ctx.json(
+        await listWithPagination<Tenant>(ctx, {
+          model: "tenant",
+          where: [{ field: "id", value: tenantIds, operator: "in" }],
+          sortBy,
+          ...pagination,
+        }),
+      );
     },
   );
 
@@ -152,7 +182,9 @@ export const updateTenant = (options?: TenantAuthOptions) =>
         data: z.object({
           name: z.string().optional(),
           slug: z.string().optional(),
-          metadata: z.record(z.string(), z.any()).optional(),
+          metadata: z.record(z.string(), z.any()).nullable().optional().meta({
+            description: "Arbitrary metadata stored with the tenant. Pass `null` to clear.",
+          }),
         }),
       }),
       metadata: {
@@ -191,7 +223,12 @@ export const updateTenant = (options?: TenantAuthOptions) =>
         update: {
           ...(ctx.body.data.name ? { name: ctx.body.data.name } : {}),
           ...(ctx.body.data.slug ? { slug: ctx.body.data.slug } : {}),
-          ...(ctx.body.data.metadata ? { metadata: JSON.stringify(ctx.body.data.metadata) } : {}),
+          ...("metadata" in ctx.body.data
+            ? {
+                metadata:
+                  ctx.body.data.metadata === null ? null : JSON.stringify(ctx.body.data.metadata),
+              }
+            : {}),
           updatedAt: new Date(),
         },
       });

@@ -28,6 +28,22 @@ Platform users who manage a tenant (not tenant end-users).
 
 Add a unique index on `(tenantId, userId)` in your ORM (Better Auth does not emit composite uniques).
 
+## `tenantInvite`
+
+Invites for tenant end-users to sign up via email when invite-only sign-up is enabled.
+
+| Field        | Type     | Notes                                             |
+| ------------ | -------- | ------------------------------------------------- |
+| `id`         | `string` | Primary key                                       |
+| `tenantId`   | `string` | FK → `tenant.id`, cascade delete, indexed         |
+| `email`      | `string` | Invited email, indexed                            |
+| `token`      | `string` | Unique invite token                               |
+| `invitedBy`  | `string` | FK → `user.id` (platform user), optional, indexed |
+| `expiresAt`  | `date`   | Expiration time                                   |
+| `consumedAt` | `date`   | Set when used for sign-up                         |
+| `revokedAt`  | `date`   | Set when revoked by an admin                      |
+| `createdAt`  | `date`   | Default: now                                      |
+
 ## `tenantOauthConfig`
 
 | Field          | Type      | Notes                                    |
@@ -131,6 +147,18 @@ interface TenantMember {
   tenantId: string;
   userId: string;
   role: TenantRole;
+  createdAt: Date;
+}
+
+interface TenantInvite {
+  id: string;
+  tenantId: string;
+  email: string;
+  token: string;
+  invitedBy?: string | null;
+  expiresAt: Date;
+  consumedAt?: Date | null;
+  revokedAt?: Date | null;
   createdAt: Date;
 }
 

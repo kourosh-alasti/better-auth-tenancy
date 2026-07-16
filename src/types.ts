@@ -49,6 +49,24 @@ export interface TenantMember {
 }
 
 /**
+ * An invite for a tenant end-user to sign up via email.
+ */
+export interface TenantInvite {
+  id: string;
+  tenantId: string;
+  email: string;
+  token: string;
+  /**
+   * Platform user id of the admin/owner who created the invite.
+   */
+  invitedBy?: string | null | undefined;
+  expiresAt: Date;
+  consumedAt?: Date | null | undefined;
+  revokedAt?: Date | null | undefined;
+  createdAt: Date;
+}
+
+/**
  * A per-tenant OAuth provider configuration.
  */
 export interface TenantOAuthConfig {
@@ -161,6 +179,28 @@ export interface TenantAuthOptions {
    * @default false
    */
   exposeTenantDetailsPublicly?: boolean | undefined;
+  /**
+   * When `true`, OAuth credentials that cannot be decrypted are treated as
+   * legacy plaintext values instead of failing. Use only while migrating
+   * rows created before encryption was introduced.
+   *
+   * @default false
+   */
+  allowLegacyPlaintextCredentials?: boolean | undefined;
+  /**
+   * When `true`, tenant email sign-up requires a valid, unconsumed invite
+   * token matching the sign-up email. Default: `false` (open sign-up).
+   */
+  requireInviteForTenantSignUp?: boolean | undefined;
+  /**
+   * Restrict tenant email sign-up to these email domains when invite is
+   * not required. Ignored when `requireInviteForTenantSignUp` is `true`.
+   * Pass a static list or a per-tenant resolver.
+   */
+  allowedEmailDomains?:
+    | string[]
+    | ((tenantId: string, ctx: GenericEndpointContext) => Awaitable<string[]>)
+    | undefined;
   /**
    * Custom schema for the plugin (rename models/fields).
    */

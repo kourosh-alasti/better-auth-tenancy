@@ -9,6 +9,7 @@ import { TENANT_AUTH_ERROR_CODES } from "./error-codes.ts";
 import type {
   Tenant,
   TenantAuthOptions,
+  TenantInvite,
   TenantMember,
   TenantOAuthConfig,
   TenantRole,
@@ -43,12 +44,13 @@ export async function encryptCredential(
 }
 
 /**
- * Decrypts an OAuth credential stored at rest. Falls back to returning
- * the raw value for rows created before encryption was introduced.
+ * Decrypts an OAuth credential stored at rest. Fails explicitly unless
+ * `allowLegacyPlaintextCredentials` is enabled for migration.
  */
 export async function decryptCredential(
   ctx: GenericEndpointContext,
   value: string,
+  options?: TenantAuthOptions,
 ): Promise<string> {
   try {
     return await symmetricDecrypt({
@@ -56,8 +58,79 @@ export async function decryptCredential(
       data: value,
     });
   } catch {
-    return value;
+    if (options?.allowLegacyPlaintextCredentials) {
+      return value;
+    }
+    throw APIError.from(
+      "INTERNAL_SERVER_ERROR",
+      TENANT_AUTH_ERROR_CODES.OAUTH_CREDENTIAL_DECRYPT_FAILED,
+    );
   }
+}
+
+export const DEFAULT_LIST_LIMIT = 50;
+export const MAX_LIST_LIMIT = 100;
+
+export type PaginatedList<T> = {
+  data: T[];
+  total: number;
+  nextOffset?: number;
+};
+
+type ListWhere = NonNullable<
+  Parameters<GenericEndpointContext["context"]["adapter"]["findMany"]>[0]
+>["where"];
+
+function isPaginatedRequest(limit?: number, offset?: number): boolean {
+  return limit !== undefined || (offset !== undefined && offset > 0);
+}
+
+/**
+ * Lists records with optional limit/offset pagination. When no pagination
+ * params are provided, returns a plain array for backward compatibility.
+ */
+export async function listWithPagination<T>(
+  ctx: GenericEndpointContext,
+  args: {
+    model: string;
+    where?: ListWhere;
+    limit?: number;
+    offset?: number;
+    sortBy?: { field: string; direction: "asc" | "desc" };
+  },
+): Promise<T[] | PaginatedList<T>> {
+  const offset = args.offset ?? 0;
+  const paginated = isPaginatedRequest(args.limit, offset);
+
+  if (!paginated) {
+    return await ctx.context.adapter.findMany<T>({
+      model: args.model,
+      where: args.where,
+      sortBy: args.sortBy,
+    });
+  }
+
+  const limit = args.limit ?? DEFAULT_LIST_LIMIT;
+  const [data, total] = await Promise.all([
+    ctx.context.adapter.findMany<T>({
+      model: args.model,
+      where: args.where,
+      limit,
+      offset,
+      sortBy: args.sortBy,
+    }),
+    ctx.context.adapter.count({
+      model: args.model,
+      where: args.where,
+    }),
+  ]);
+
+  const nextOffset = offset + data.length < total ? offset + limit : undefined;
+  return {
+    data,
+    total,
+    ...(nextOffset !== undefined ? { nextOffset } : {}),
+  };
 }
 
 /**
@@ -373,6 +446,72 @@ export async function canViewTenantDetails(
   return (await resolveTenantRole(ctx, tenant, user.id)) !== null;
 }
 
+type TenantAdapter = GenericEndpointContext["context"]["adapter"];
+
+function getAdapterTransaction(
+  adapter: TenantAdapter,
+): (<T>(fn: (trx: TenantAdapter) => Promise<T>) => Promise<T>) | null {
+  const transaction = (adapter as { transaction?: unknown }).transaction;
+  if (typeof transaction !== "function") return null;
+  return transaction as <T>(fn: (trx: TenantAdapter) => Promise<T>) => Promise<T>;
+}
+
+function compareTenantMembers(a: TenantMember, b: TenantMember): number {
+  const byCreatedAt = a.createdAt.getTime() - b.createdAt.getTime();
+  if (byCreatedAt !== 0) return byCreatedAt;
+  return a.userId.localeCompare(b.userId);
+}
+
+/**
+ * Lists owner memberships for a tenant in deterministic order (createdAt,
+ * then userId). Membership role is the source of truth for ownership.
+ */
+export async function listOwnerMembers(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+): Promise<TenantMember[]> {
+  const owners = await ctx.context.adapter.findMany<TenantMember>({
+    model: "tenantMember",
+    where: [
+      { field: "tenantId", value: tenantId },
+      { field: "role", value: "owner" },
+    ],
+  });
+  return owners.sort(compareTenantMembers);
+}
+
+/**
+ * Blocks demoting or removing the last owner of a tenant.
+ */
+export async function assertNotLastOwner(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+): Promise<void> {
+  const owners = await listOwnerMembers(ctx, tenantId);
+  if (owners.length <= 1) {
+    throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.CANNOT_REMOVE_LAST_OWNER);
+  }
+}
+
+/**
+ * Keeps `tenant.ownerId` in sync with owner memberships. Picks the earliest
+ * owner membership (createdAt, then userId) or null when none remain.
+ */
+export async function syncTenantOwnerId(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+): Promise<void> {
+  const owners = await listOwnerMembers(ctx, tenantId);
+  await ctx.context.adapter.update<Tenant>({
+    model: "tenant",
+    where: [{ field: "id", value: tenantId }],
+    update: {
+      ownerId: owners[0]?.userId ?? null,
+      updatedAt: new Date(),
+    },
+  });
+}
+
 /**
  * Creates an owner membership for a platform user on a newly created tenant.
  */
@@ -390,6 +529,67 @@ export async function createOwnerMembership(
       createdAt: new Date(),
     },
   });
+}
+
+/**
+ * Creates a tenant and, when `ownerUserId` is set, an owner membership
+ * atomically. Uses an adapter transaction when available; otherwise rolls
+ * back tenant creation if membership creation fails.
+ */
+export async function createTenantWithOwner(
+  ctx: GenericEndpointContext,
+  data: Omit<Tenant, "id">,
+  ownerUserId: string | null,
+): Promise<Tenant> {
+  const adapter = ctx.context.adapter;
+  const transaction = getAdapterTransaction(adapter);
+
+  if (ownerUserId && transaction) {
+    return await transaction(async (trx: TenantAdapter) => {
+      const tenant = (await trx.create({
+        model: "tenant",
+        data: { ...data, ownerId: ownerUserId },
+      })) as Tenant;
+      await trx.create({
+        model: "tenantMember",
+        data: {
+          tenantId: tenant.id,
+          userId: ownerUserId,
+          role: "owner",
+          createdAt: new Date(),
+        },
+      });
+      return tenant;
+    });
+  }
+
+  const tenant = await ctx.context.adapter.create<Omit<Tenant, "id">, Tenant>({
+    model: "tenant",
+    data,
+  });
+
+  if (!ownerUserId) {
+    return tenant;
+  }
+
+  try {
+    await createOwnerMembership(ctx, tenant.id, ownerUserId);
+  } catch (error) {
+    try {
+      await ctx.context.adapter.delete({
+        model: "tenant",
+        where: [{ field: "id", value: tenant.id }],
+      });
+    } catch (rollbackError) {
+      ctx.context.logger.error("Failed to rollback tenant after owner membership creation failed", {
+        tenantId: tenant.id,
+        error: rollbackError,
+      });
+    }
+    throw error;
+  }
+
+  return tenant;
 }
 
 /**
@@ -441,6 +641,7 @@ export async function resolveTenantProvider(
   ctx: GenericEndpointContext,
   tenantId: string,
   providerId: string,
+  options?: TenantAuthOptions,
 ): Promise<{ provider: OAuthProvider; redirectURI: string }> {
   const defaultRedirectURI = `${ctx.context.baseURL}/tenant/callback/${providerId}`;
   const config = await findTenantOAuthConfig(ctx, tenantId, providerId);
@@ -452,8 +653,8 @@ export async function resolveTenantProvider(
 
     const redirectURI = config.redirectURI || defaultRedirectURI;
     const providerOptions: ProviderOptions = {
-      clientId: await decryptCredential(ctx, config.clientId),
-      clientSecret: await decryptCredential(ctx, config.clientSecret),
+      clientId: await decryptCredential(ctx, config.clientId, options),
+      clientSecret: await decryptCredential(ctx, config.clientSecret, options),
       redirectURI,
       ...(config.scopes ? { scope: config.scopes.split(",").map((s) => s.trim()) } : {}),
     };
@@ -489,4 +690,106 @@ export function isUniqueConstraintError(error: unknown): boolean {
     code === "SQLITE_CONSTRAINT_UNIQUE" ||
     code === "ER_DUP_ENTRY"
   );
+}
+
+export function getEmailDomain(email: string): string {
+  const at = email.lastIndexOf("@");
+  if (at === -1) return "";
+  return email.slice(at + 1).toLowerCase();
+}
+
+export async function resolveAllowedEmailDomains(
+  ctx: GenericEndpointContext,
+  options: TenantAuthOptions | undefined,
+  tenantId: string,
+): Promise<string[] | null> {
+  const configured = options?.allowedEmailDomains;
+  if (!configured) return null;
+  const domains = typeof configured === "function" ? await configured(tenantId, ctx) : configured;
+  return domains.map((domain) => domain.toLowerCase());
+}
+
+function assertInviteValid(invite: TenantInvite, tenantId: string, email: string): void {
+  if (invite.tenantId !== tenantId) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+  }
+  if (invite.revokedAt) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+  }
+  if (invite.consumedAt) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+  }
+  if (invite.expiresAt < new Date()) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_EXPIRED);
+  }
+  if (invite.email.toLowerCase() !== email) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+  }
+}
+
+export async function findTenantInviteByToken(
+  ctx: GenericEndpointContext,
+  token: string,
+): Promise<TenantInvite | null> {
+  return await ctx.context.adapter.findOne<TenantInvite>({
+    model: "tenantInvite",
+    where: [{ field: "token", value: token }],
+  });
+}
+
+export async function validateTenantSignUpInvite(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+  email: string,
+  inviteToken: string,
+): Promise<TenantInvite> {
+  const invite = await findTenantInviteByToken(ctx, inviteToken);
+  if (!invite) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+  }
+  assertInviteValid(invite, tenantId, email);
+  return invite;
+}
+
+export async function assertTenantSignUpAllowed(
+  ctx: GenericEndpointContext,
+  options: TenantAuthOptions | undefined,
+  tenant: Tenant,
+  email: string,
+  inviteToken?: string,
+): Promise<TenantInvite | null> {
+  const normalizedEmail = email.toLowerCase();
+
+  if (options?.requireInviteForTenantSignUp) {
+    if (!inviteToken) {
+      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_REQUIRED);
+    }
+    return await validateTenantSignUpInvite(ctx, tenant.id, normalizedEmail, inviteToken);
+  }
+
+  const allowedDomains = await resolveAllowedEmailDomains(ctx, options, tenant.id);
+  if (allowedDomains && allowedDomains.length > 0) {
+    const domain = getEmailDomain(normalizedEmail);
+    if (!allowedDomains.includes(domain)) {
+      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.EMAIL_DOMAIN_NOT_ALLOWED);
+    }
+  }
+
+  return null;
+}
+
+export async function consumeTenantInvite(
+  ctx: GenericEndpointContext,
+  invite: TenantInvite,
+): Promise<void> {
+  await ctx.context.adapter.update<TenantInvite>({
+    model: "tenantInvite",
+    where: [{ field: "id", value: invite.id }],
+    update: { consumedAt: new Date() },
+  });
+}
+
+export function isPendingTenantInvite(invite: TenantInvite): boolean {
+  if (invite.consumedAt || invite.revokedAt) return false;
+  return invite.expiresAt >= new Date();
 }

@@ -135,6 +135,38 @@ tenantAuth({
 
 Set this to `true` only if your tenant `metadata` contains nothing sensitive and you want it available publicly (e.g. for theming a login page).
 
+## `requireInviteForTenantSignUp`
+
+When `true`, tenant email sign-up (`POST /tenant/sign-up/email`) requires a valid invite token in the `inviteToken` body field. Invites are created by tenant admins/owners via `POST /tenant/invite/create` and are single-use.
+
+Default: `false` (open sign-up when no other policy applies).
+
+## `allowedEmailDomains`
+
+Restrict tenant email sign-up to specific email domains. Ignored when `requireInviteForTenantSignUp` is `true`.
+
+Pass a static list or a per-tenant resolver:
+
+```ts
+tenantAuth({
+  allowedEmailDomains: ["acme.com", "acme.co.uk"],
+});
+
+// or per-tenant:
+tenantAuth({
+  allowedEmailDomains: async (tenantId, ctx) => {
+    const tenant = await db.query.tenant.findFirst({ where: eq(tenant.id, tenantId) });
+    return tenant?.metadata?.allowedDomains ?? [];
+  },
+});
+```
+
+When omitted and invite-only sign-up is disabled, sign-up remains open (backward compatible).
+
+## `allowLegacyPlaintextCredentials`
+
+When `false` (default), OAuth credentials that cannot be decrypted raise `OAUTH_CREDENTIAL_DECRYPT_FAILED` instead of being treated as plaintext. Set to `true` only while migrating rows created before credential encryption was introduced.
+
 ## `schema`
 
 Pass a custom Better Auth plugin schema to rename models or fields. The plugin merges your overrides with its default schema via `mergeSchema`.
@@ -151,6 +183,9 @@ interface TenantAuthOptions {
   enforceSessionTenant?: boolean; // default: true
   reservedSlugs?: string[];
   exposeTenantDetailsPublicly?: boolean; // default: false
+  requireInviteForTenantSignUp?: boolean; // default: false
+  allowedEmailDomains?: string[] | ((tenantId: string, ctx) => Awaitable<string[]>);
+  allowLegacyPlaintextCredentials?: boolean; // default: false
   schema?: BetterAuthPluginDBSchema;
 }
 ```

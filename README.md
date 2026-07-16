@@ -8,6 +8,8 @@ Add tenant-scoped users, per-tenant OAuth, and management APIs to your Better Au
 
 - **Tenant-scoped users** — the same email can exist under different tenants as separate users
 - **Platform membership RBAC** — `owner` / `admin` / `member` on tenants platform users create
+- **Invites & sign-up policies** — invite-only sign-up and email-domain allowlists per tenant
+- **Tenant email verification** — `GET /tenant/verify-email` for tenant-scoped verification tokens
 - **Per-tenant OAuth** — store OAuth client credentials per tenant, with fallback to global providers
 - **Management APIs** — create, update, list, and delete tenants, members, and OAuth configs
 - **Better Auth native** — extends schema, endpoints, and the client plugin alongside Better Auth adapters and sessions
@@ -59,6 +61,8 @@ export const authClient = createAuthClient({
 The plugin adds:
 
 - `tenant` — tenant records
+- `tenantMember` — platform-user roles (`owner` / `admin` / `member`) on tenants
+- `tenantInvite` — invites for tenant end-user email sign-up
 - `tenantOauthConfig` — per-tenant OAuth credentials
 - `tenantId` on `user`, `session`, `account`, and `verification`
 

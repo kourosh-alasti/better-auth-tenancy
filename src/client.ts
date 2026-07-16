@@ -17,6 +17,9 @@ export const tenantAuthClient = () => {
       "/tenant/member/list": "GET",
       "/tenant/member/update": "POST",
       "/tenant/member/remove": "POST",
+      "/tenant/invite/create": "POST",
+      "/tenant/invite/list": "GET",
+      "/tenant/invite/revoke": "POST",
       "/tenant/sign-up/email": "POST",
       "/tenant/sign-in/email": "POST",
       "/tenant/verify-email": "GET",
@@ -42,6 +45,7 @@ export { TENANT_AUTH_ERROR_CODES } from "./error-codes";
 export type {
   Tenant,
   TenantAuthOptions,
+  TenantInvite,
   TenantMember,
   TenantOAuthConfig,
   TenantRole,

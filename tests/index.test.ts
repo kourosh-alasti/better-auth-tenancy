@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { tenantAuth } from "../src/index";
 import { tenantAuthClient } from "../src/client";
+import * as tenantUtils from "../src/utils";
 
 const providerMocks = vi.hoisted(() => ({
   validateAuthorizationCode: vi.fn(),
@@ -525,6 +526,36 @@ describe("tenant-auth", async () => {
       ).rejects.toMatchObject({
         body: { code: "CANNOT_REMOVE_LAST_OWNER" },
       });
+
+      const tenant = await auth.api.getTenant({
+        query: { id: rbacTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(tenant.ownerId).toBe(ownerUserId);
+
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: rbacTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
+      expect(members.some((m) => m.userId === ownerUserId && m.role === "owner")).toBe(true);
+    });
+
+    it("should prevent demoting the last owner", async () => {
+      await expect(
+        auth.api.updateTenantMember({
+          body: { tenantId: rbacTenant.id, userId: ownerUserId, role: "admin" },
+          headers: ownerHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "CANNOT_REMOVE_LAST_OWNER" },
+      });
+
+      const tenant = await auth.api.getTenant({
+        query: { id: rbacTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(tenant.ownerId).toBe(ownerUserId);
     });
 
     it("should let the owner remove a member", async () => {
@@ -537,6 +568,150 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
       expect(members.some((m) => m.userId === memberUserId)).toBe(false);
+    });
+  });
+
+  describe("owner durability", () => {
+    const ownerHeaders = new Headers();
+    const coOwnerHeaders = new Headers();
+    let ownerUserId = "";
+    let coOwnerUserId = "";
+    let durableTenant: { id: string; ownerId?: string | null };
+
+    it("should set up a tenant with two owners", async () => {
+      const owner = await auth.api.signUpEmail({
+        body: {
+          name: "Durable Owner",
+          email: "durable-owner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      ownerUserId = owner.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        owner.headers.get("set-cookie") || "",
+      ).entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      durableTenant = await auth.api.createTenant({
+        body: { name: "Durable Co", slug: "durable-co" },
+        headers: ownerHeaders,
+      });
+      expect(durableTenant.ownerId).toBe(ownerUserId);
+
+      const coOwner = await auth.api.signUpEmail({
+        body: {
+          name: "Durable Co-Owner",
+          email: "durable-coowner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      coOwnerUserId = coOwner.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        coOwner.headers.get("set-cookie") || "",
+      ).entries()) {
+        coOwnerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await auth.api.addTenantMember({
+        body: { tenantId: durableTenant.id, userId: coOwnerUserId, role: "owner" },
+        headers: ownerHeaders,
+      });
+
+      const tenant = await auth.api.getTenant({
+        query: { id: durableTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(tenant.ownerId).toBe(ownerUserId);
+    });
+
+    it("should reassign ownerId when the primary owner is demoted", async () => {
+      await auth.api.updateTenantMember({
+        body: { tenantId: durableTenant.id, userId: ownerUserId, role: "admin" },
+        headers: ownerHeaders,
+      });
+
+      const tenant = await auth.api.getTenant({
+        query: { id: durableTenant.id },
+        headers: coOwnerHeaders,
+      });
+      expect(tenant.ownerId).toBe(coOwnerUserId);
+
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: durableTenant.id },
+        headers: coOwnerHeaders,
+      });
+      expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
+      expect(members.some((m) => m.userId === coOwnerUserId && m.role === "owner")).toBe(true);
+    });
+
+    it("should reassign ownerId when an owner is removed", async () => {
+      await auth.api.updateTenantMember({
+        body: { tenantId: durableTenant.id, userId: ownerUserId, role: "owner" },
+        headers: coOwnerHeaders,
+      });
+
+      const tenantBefore = await auth.api.getTenant({
+        query: { id: durableTenant.id },
+        headers: coOwnerHeaders,
+      });
+      expect(tenantBefore.ownerId).toBe(ownerUserId);
+
+      await auth.api.removeTenantMember({
+        body: { tenantId: durableTenant.id, userId: ownerUserId },
+        headers: coOwnerHeaders,
+      });
+
+      const tenant = await auth.api.getTenant({
+        query: { id: durableTenant.id },
+        headers: coOwnerHeaders,
+      });
+      expect(tenant.ownerId).toBe(coOwnerUserId);
+    });
+  });
+
+  describe("atomic tenant creation", () => {
+    it("should delete the tenant when owner membership creation fails", async () => {
+      const logger = { error: vi.fn() };
+      const adapter = {
+        create: vi.fn(async (args: { model: string; data: Record<string, unknown> }) => {
+          if (args.model === "tenant") {
+            return { id: "tenant-rollback-test", ...args.data };
+          }
+          if (args.model === "tenantMember") {
+            throw new Error("simulated membership failure");
+          }
+          throw new Error(`unexpected model ${args.model}`);
+        }),
+        delete: vi.fn(async () => undefined),
+      };
+      const ctx = {
+        context: { adapter, logger },
+      } as Parameters<typeof tenantUtils.createTenantWithOwner>[0];
+
+      await expect(
+        tenantUtils.createTenantWithOwner(
+          ctx,
+          {
+            name: "Rollback Co",
+            slug: "rollback-co",
+            ownerId: "user-1",
+            metadata: null,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+          "user-1",
+        ),
+      ).rejects.toThrow("simulated membership failure");
+
+      expect(adapter.create).toHaveBeenCalledTimes(2);
+      expect(adapter.delete).toHaveBeenCalledWith({
+        model: "tenant",
+        where: [{ field: "id", value: "tenant-rollback-test" }],
+      });
+      expect(logger.error).not.toHaveBeenCalled();
     });
   });
 
@@ -710,6 +885,182 @@ describe("tenant-auth", async () => {
         }),
       ).rejects.toMatchObject({
         body: { code: "INVALID_CALLBACK_URL" },
+      });
+    });
+  });
+
+  describe("tenant sign-up policy", async () => {
+    const adminHeaders = new Headers({ "x-admin": "1" });
+
+    describe("invite-only sign-up", async () => {
+      const { auth: inviteAuth } = await getTestInstance(
+        {
+          emailAndPassword: { enabled: true },
+          plugins: [
+            tenantAuth({
+              canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+              requireInviteForTenantSignUp: true,
+            }),
+          ],
+        },
+        { clientOptions: { plugins: [tenantAuthClient()] } },
+      );
+
+      const inviteTenant = await inviteAuth.api.createTenant({
+        body: { name: "Invite Tenant", slug: "invite-tenant" },
+        headers: adminHeaders,
+      });
+
+      it("should block sign-up without an invite when invite is required", async () => {
+        await expect(
+          inviteAuth.api.signUpEmailTenant({
+            body: {
+              tenantId: inviteTenant.id,
+              name: "No Invite",
+              email: "no-invite@example.com",
+              password: "password-1",
+            },
+          }),
+        ).rejects.toMatchObject({
+          body: { code: "INVITE_REQUIRED" },
+        });
+      });
+
+      it("should allow sign-up with a valid invite and consume it", async () => {
+        const invite = await inviteAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteTenant.id,
+            email: "invited@example.com",
+          },
+          headers: adminHeaders,
+        });
+
+        const res = await inviteAuth.api.signUpEmailTenant({
+          body: {
+            tenantId: inviteTenant.id,
+            name: "Invited User",
+            email: "invited@example.com",
+            password: "password-2",
+            inviteToken: invite.token,
+          },
+        });
+        expect(res.token).toBeDefined();
+        expect((res.user as typeof res.user & { tenantId?: string }).tenantId).toBe(
+          inviteTenant.id,
+        );
+
+        const invites = await inviteAuth.api.listTenantInvites({
+          query: { tenantId: inviteTenant.id, includeConsumed: true },
+          headers: adminHeaders,
+        });
+        const consumed = invites.find((item) => item.id === invite.id);
+        expect(consumed?.consumedAt).toBeTruthy();
+      });
+
+      it("should reject reusing a consumed invite", async () => {
+        const invite = await inviteAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteTenant.id,
+            email: "single-use@example.com",
+          },
+          headers: adminHeaders,
+        });
+
+        await inviteAuth.api.signUpEmailTenant({
+          body: {
+            tenantId: inviteTenant.id,
+            name: "First User",
+            email: "single-use@example.com",
+            password: "password-3",
+            inviteToken: invite.token,
+          },
+        });
+
+        await expect(
+          inviteAuth.api.signUpEmailTenant({
+            body: {
+              tenantId: inviteTenant.id,
+              name: "Second User",
+              email: "single-use@example.com",
+              password: "password-4",
+              inviteToken: invite.token,
+            },
+          }),
+        ).rejects.toMatchObject({
+          body: { code: "INVITE_INVALID" },
+        });
+      });
+    });
+
+    describe("email domain allowlist", async () => {
+      const { auth: domainAuth } = await getTestInstance({
+        emailAndPassword: { enabled: true },
+        plugins: [
+          tenantAuth({
+            canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+            allowedEmailDomains: ["allowed.example"],
+          }),
+        ],
+      });
+
+      const domainTenant = await domainAuth.api.createTenant({
+        body: { name: "Domain Tenant", slug: "domain-tenant" },
+        headers: adminHeaders,
+      });
+
+      it("should allow sign-up when the email domain is allowlisted", async () => {
+        const res = await domainAuth.api.signUpEmailTenant({
+          body: {
+            tenantId: domainTenant.id,
+            name: "Allowed User",
+            email: "user@allowed.example",
+            password: "password-5",
+          },
+        });
+        expect(res.token).toBeDefined();
+      });
+
+      it("should reject sign-up when the email domain is not allowlisted", async () => {
+        await expect(
+          domainAuth.api.signUpEmailTenant({
+            body: {
+              tenantId: domainTenant.id,
+              name: "Blocked User",
+              email: "user@blocked.example",
+              password: "password-6",
+            },
+          }),
+        ).rejects.toMatchObject({
+          body: { code: "EMAIL_DOMAIN_NOT_ALLOWED" },
+        });
+      });
+    });
+
+    describe("backward-compatible sign-up", async () => {
+      const { auth: openAuth } = await getTestInstance({
+        emailAndPassword: { enabled: true },
+        plugins: [
+          tenantAuth({
+            canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+          }),
+        ],
+      });
+
+      const openTenant = await openAuth.api.createTenant({
+        body: { name: "Open Tenant", slug: "open-tenant" },
+        headers: adminHeaders,
+      });
+
+      it("should allow open sign-up when no policy is configured", async () => {
+        const res = await openAuth.api.signUpEmailTenant({
+          body: {
+            tenantId: openTenant.id,
+            name: "Open User",
+            email: "open-user@example.com",
+            password: "password-7",
+          },
+        });
+        expect(res.token).toBeDefined();
       });
     });
   });
@@ -1087,6 +1438,261 @@ describe("tenant-auth", async () => {
       await expect(auth.api.getTenant({ query: { id: tenant.id } })).rejects.toMatchObject({
         body: { code: "TENANT_NOT_FOUND" },
       });
+    });
+  });
+
+  describe("tenant metadata updates", () => {
+    it("should set, clear, and omit metadata on update", async () => {
+      const tenant = await auth.api.createTenant({
+        body: { name: "Meta Co", slug: "meta-co", metadata: { plan: "pro" } },
+        headers: adminHeaders,
+      });
+      expect(tenant.metadata).toBe(JSON.stringify({ plan: "pro" }));
+
+      const updated = await auth.api.updateTenant({
+        body: { id: tenant.id, data: { metadata: { plan: "enterprise", seats: 10 } } },
+        headers: adminHeaders,
+      });
+      expect(updated.metadata).toBe(JSON.stringify({ plan: "enterprise", seats: 10 }));
+
+      const cleared = await auth.api.updateTenant({
+        body: { id: tenant.id, data: { metadata: null } },
+        headers: adminHeaders,
+      });
+      expect(cleared.metadata).toBeNull();
+
+      const renamed = await auth.api.updateTenant({
+        body: { id: tenant.id, data: { name: "Meta Co Renamed" } },
+        headers: adminHeaders,
+      });
+      expect(renamed.name).toBe("Meta Co Renamed");
+      expect(renamed.metadata).toBeNull();
+    });
+  });
+
+  describe("list pagination", () => {
+    it("should return a plain array without pagination params", async () => {
+      const tenants = await auth.api.listTenants({ headers: adminHeaders });
+      expect(Array.isArray(tenants)).toBe(true);
+      expect("data" in (tenants as object)).toBe(false);
+    });
+
+    it("should paginate listTenants", async () => {
+      const page = (await auth.api.listTenants({
+        query: { limit: 1, offset: 0 },
+        headers: adminHeaders,
+      })) as { data: { id: string }[]; total: number; nextOffset?: number };
+      expect(page.data).toHaveLength(1);
+      expect(page.total).toBeGreaterThanOrEqual(2);
+      expect(page.nextOffset).toBe(1);
+    });
+
+    it("should paginate listTenantMembers", async () => {
+      const ownerSignUp = await auth.api.signUpEmail({
+        body: {
+          name: "Pagination Owner",
+          email: "pagination-owner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      const ownerHeaders = new Headers();
+      for (const [name, { value }] of parseSetCookieHeader(
+        ownerSignUp.headers.get("set-cookie") || "",
+      ).entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+      const tenant = await auth.api.createTenant({
+        body: { name: "Pagination Co", slug: "pagination-co" },
+        headers: ownerHeaders,
+      });
+      const extra = await auth.api.signUpEmail({
+        body: {
+          name: "Pagination Extra",
+          email: "pagination-extra@platform.com",
+          password: "password",
+        },
+      });
+      await auth.api.addTenantMember({
+        body: { tenantId: tenant.id, userId: extra.user.id, role: "member" },
+        headers: ownerHeaders,
+      });
+
+      const page = (await auth.api.listTenantMembers({
+        query: { tenantId: tenant.id, limit: 1, offset: 0 },
+        headers: ownerHeaders,
+      })) as { data: unknown[]; total: number; nextOffset?: number };
+      expect(page.data).toHaveLength(1);
+      expect(page.total).toBe(2);
+      expect(page.nextOffset).toBe(1);
+    });
+  });
+
+  describe("platform user resolution by email", () => {
+    it("should reject ambiguous platform users with the same email", async () => {
+      const ctx = await auth.$context;
+      const email = "ambiguous@platform.com";
+      await ctx.adapter.create({
+        model: "user",
+        data: {
+          id: "ambiguous-user-1",
+          name: "Ambiguous One",
+          email,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          tenantId: null,
+        },
+      });
+      await ctx.adapter.create({
+        model: "user",
+        data: {
+          id: "ambiguous-user-2",
+          name: "Ambiguous Two",
+          email,
+          emailVerified: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          tenantId: null,
+        },
+      });
+
+      await expect(
+        auth.api.addTenantMember({
+          body: { tenantId: tenantA.id, email, role: "member" },
+          headers: adminHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "PLATFORM_USER_AMBIGUOUS" },
+      });
+    });
+  });
+
+  describe("OAuth credential decryption", async () => {
+    const { auth: strictAuth } = await getTestInstance(
+      {
+        emailAndPassword: { enabled: true },
+        socialProviders: {
+          google: {
+            clientId: "global-client-id",
+            clientSecret: "global-client-secret",
+          },
+        },
+        plugins: [
+          tenantAuth({
+            canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+          }),
+        ],
+      },
+      { clientOptions: { plugins: [tenantAuthClient()] } },
+    );
+
+    const { auth: legacyAuth } = await getTestInstance(
+      {
+        emailAndPassword: { enabled: true },
+        socialProviders: {
+          google: {
+            clientId: "global-client-id",
+            clientSecret: "global-client-secret",
+          },
+        },
+        plugins: [
+          tenantAuth({
+            canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+            allowLegacyPlaintextCredentials: true,
+          }),
+        ],
+      },
+      { clientOptions: { plugins: [tenantAuthClient()] } },
+    );
+
+    const adminHeadersLocal = new Headers({ "x-admin": "1" });
+    let decryptTenant: { id: string };
+
+    it("should seed a tenant with legacy plaintext OAuth credentials", async () => {
+      decryptTenant = await strictAuth.api.createTenant({
+        body: { name: "Decrypt Co", slug: "decrypt-co" },
+        headers: adminHeadersLocal,
+      });
+      const ctx = await strictAuth.$context;
+      await ctx.adapter.create({
+        model: "tenantOauthConfig",
+        data: {
+          id: "legacy-oauth-config",
+          tenantId: decryptTenant.id,
+          providerId: "google",
+          clientId: "legacy-plaintext-client-id",
+          clientSecret: "legacy-plaintext-client-secret",
+          enabled: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+    });
+
+    it("should fail to list OAuth configs when decryption fails", async () => {
+      await expect(
+        strictAuth.api.listTenantOAuthConfigs({
+          query: { tenantId: decryptTenant.id },
+          headers: adminHeadersLocal,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "OAUTH_CREDENTIAL_DECRYPT_FAILED" },
+      });
+    });
+
+    it("should fail social sign-in when decryption fails", async () => {
+      await expect(
+        strictAuth.api.signInSocialTenant({
+          body: {
+            tenantId: decryptTenant.id,
+            provider: "google",
+            callbackURL: "/dashboard",
+            disableRedirect: true,
+          },
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "OAUTH_CREDENTIAL_DECRYPT_FAILED" },
+      });
+    });
+
+    it("should allow legacy plaintext credentials when migration mode is enabled", async () => {
+      const legacyTenant = await legacyAuth.api.createTenant({
+        body: { name: "Legacy Decrypt Co", slug: "legacy-decrypt-co" },
+        headers: adminHeadersLocal,
+      });
+      const legacyCtx = await legacyAuth.$context;
+      await legacyCtx.adapter.create({
+        model: "tenantOauthConfig",
+        data: {
+          id: "legacy-oauth-config-2",
+          tenantId: legacyTenant.id,
+          providerId: "google",
+          clientId: "legacy-plaintext-client-id",
+          clientSecret: "legacy-plaintext-client-secret",
+          enabled: true,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+
+      const configs = await legacyAuth.api.listTenantOAuthConfigs({
+        query: { tenantId: legacyTenant.id },
+        headers: adminHeadersLocal,
+      });
+      expect(configs[0]!.clientId).toBe("legacy-plaintext-client-id");
+
+      const res = await legacyAuth.api.signInSocialTenant({
+        body: {
+          tenantId: legacyTenant.id,
+          provider: "google",
+          callbackURL: "/dashboard",
+          disableRedirect: true,
+        },
+      });
+      expect(res.url).toBeDefined();
+      const url = new URL(res.url!);
+      expect(url.searchParams.get("client_id")).toBe("legacy-plaintext-client-id");
     });
   });
 });
