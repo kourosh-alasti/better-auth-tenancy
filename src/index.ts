@@ -92,7 +92,7 @@ export const tenantAuth = (options?: TenantAuthOptions) => {
     version: PACKAGE_VERSION,
     endpoints: {
       createTenant: createTenant(options),
-      getTenant: getTenant(),
+      getTenant: getTenant(options),
       listTenants: listTenants(options),
       updateTenant: updateTenant(options),
       deleteTenant: deleteTenant(options),

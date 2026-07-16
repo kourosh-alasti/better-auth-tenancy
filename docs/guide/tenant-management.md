@@ -36,6 +36,8 @@ const { data: tenant } = await authClient.$fetch("/tenant/create", {
 // tenant.ownerId === current platform user id
 ```
 
+Slugs must be 2–63 lowercase letters, digits, or hyphens (no leading/trailing hyphen), and cannot use a reserved value like `admin`, `api`, or `www`. See [`reservedSlugs`](/guide/configuration#reservedslugs).
+
 ## Members
 
 ```ts
@@ -65,7 +67,7 @@ The last `owner` cannot be removed or demoted.
 
 ## Get / list / update / delete
 
-- **Get** by id or slug is public.
+- **Get** by id or slug is public, but unauthorized callers receive only `id`, `name`, `slug`, and `createdAt` — `ownerId` and `metadata` are only returned to tenant members and global admins (see [`exposeTenantDetailsPublicly`](/guide/configuration#exposetenantdetailspublicly)).
 - **List** returns all tenants for global admin; otherwise tenants the caller is a member of.
 - **Update** requires `admin` or higher.
 - **Delete** requires `owner` (or global admin). Cascades related users, sessions, accounts, members, and OAuth configs.

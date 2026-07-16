@@ -24,4 +24,7 @@ export const TENANT_AUTH_ERROR_CODES = defineErrorCodes({
   INVALID_VERIFICATION_TOKEN: "Invalid or unsupported verification token",
   SESSION_TENANT_MISMATCH: "This session cannot be used for this tenant or host",
   INVALID_CALLBACK_URL: "Invalid callbackURL",
+  INVALID_SLUG:
+    "Slug must be 2-63 lowercase letters, digits, or hyphens, and cannot start or end with a hyphen",
+  SLUG_RESERVED: "This slug is reserved",
 });

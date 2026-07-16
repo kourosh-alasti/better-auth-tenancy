@@ -7,15 +7,6 @@ export default async function TenantLandingPage({ params }: { params: Promise<{ 
   const { slug } = await params;
   const tenant = await getTenantBySlug(slug);
 
-  let metadata: Record<string, unknown> | null = null;
-  if (tenant.metadata) {
-    try {
-      metadata = JSON.parse(tenant.metadata) as Record<string, unknown>;
-    } catch {
-      metadata = { raw: tenant.metadata };
-    }
-  }
-
   return (
     <Container>
       <div className="mb-6">
@@ -38,16 +29,6 @@ export default async function TenantLandingPage({ params }: { params: Promise<{ 
             <dt className="font-medium text-neutral-500">Slug</dt>
             <dd>{tenant.slug}</dd>
           </div>
-          {metadata ? (
-            <div>
-              <dt className="font-medium text-neutral-500">Metadata</dt>
-              <dd>
-                <pre className="mt-1 overflow-x-auto rounded bg-neutral-50 p-2 text-xs">
-                  {JSON.stringify(metadata, null, 2)}
-                </pre>
-              </dd>
-            </div>
-          ) : null}
         </dl>
       </Card>
 

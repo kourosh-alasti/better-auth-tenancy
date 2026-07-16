@@ -147,6 +147,21 @@ export interface TenantAuthOptions {
    */
   enforceSessionTenant?: boolean | undefined;
   /**
+   * Slugs that can never be used for a tenant, merged with the
+   * plugin's built-in reserved list (`admin`, `api`, `www`, ...).
+   * Useful for protecting app-specific routes or subdomains.
+   */
+  reservedSlugs?: string[] | undefined;
+  /**
+   * Expose `ownerId` and `metadata` on the public `GET /tenant/get`
+   * endpoint. By default unauthorized callers only receive the safe
+   * subset (`id`, `name`, `slug`, `createdAt`); members and global
+   * admins always get the full record.
+   *
+   * @default false
+   */
+  exposeTenantDetailsPublicly?: boolean | undefined;
+  /**
    * Custom schema for the plugin (rename models/fields).
    */
   schema?: BetterAuthPluginDBSchema | undefined;
