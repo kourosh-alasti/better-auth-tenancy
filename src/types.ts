@@ -3,6 +3,14 @@ import type { BetterAuthPluginDBSchema } from "@better-auth/core/db";
 import type { Awaitable } from "better-auth";
 
 /**
+ * Platform-user roles on a tenant (who may manage the tenant, not
+ * end-users who authenticate under that tenant).
+ *
+ * Hierarchy: owner > admin > member
+ */
+export type TenantRole = "owner" | "admin" | "member";
+
+/**
  * A tenant record.
  */
 export interface Tenant {
@@ -16,9 +24,9 @@ export interface Tenant {
    */
   slug: string;
   /**
-   * Platform user who owns this tenant. Set on create from the
-   * authenticated session. `null` when created by a global admin
-   * without a session (e.g. API key).
+   * Primary platform owner. Set on create from the authenticated
+   * session. Kept in sync with a `tenantMember` row of role `owner`.
+   * `null` when created by a global admin without a session.
    */
   ownerId?: string | null | undefined;
   /**
@@ -27,6 +35,17 @@ export interface Tenant {
   metadata?: string | null | undefined;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/**
+ * A platform user membership on a tenant.
+ */
+export interface TenantMember {
+  id: string;
+  tenantId: string;
+  userId: string;
+  role: TenantRole;
+  createdAt: Date;
 }
 
 /**
@@ -80,7 +99,7 @@ export interface TenantAuthOptions {
   /**
    * By default the plugin removes the global unique constraint on
    * `user.email` so the same email can sign up under different
-   * tenants. Set this to `true` to keep emails globall unique
+   * tenants. Set this to `true` to keep emails globally unique
    * (one email = one tenant).
    *
    * @default false
@@ -89,11 +108,11 @@ export interface TenantAuthOptions {
   /**
    * Global admin bypass for tenant and OAuth-config management.
    *
-   * When this returns `true`, the caller can manage every tenant
-   * (create/list/update/delete and OAuth configs). When it returns
-   * `false` or is omitted, access falls through to ownership: a
-   * platform session (`user.tenantId` null) may create tenants and
-   * manage only those it owns.
+   * When this returns `true`, the caller can manage every tenant.
+   * When it returns `false` or is omitted, access falls through to
+   * membership: a platform session (`user.tenantId` null) may create
+   * tenants and manage those where they are a member with a sufficient
+   * role.
    *
    * Use for operator API keys / super-admin checks.
    */

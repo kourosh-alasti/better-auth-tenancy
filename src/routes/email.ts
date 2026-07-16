@@ -5,7 +5,7 @@ import { setSessionCookie } from "better-auth/cookies";
 import * as z from "zod";
 import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { TenantAuthOptions } from "./../types";
-import { requireTenant } from "./../utils";
+import { isUniqueConstraintError, requireTenant } from "./../utils";
 
 const findTenantUserByEmail = async (
   ctx: GenericEndpointContext,
@@ -85,13 +85,21 @@ export const signUpEmailTenant = (options?: TenantAuthOptions) =>
       }
 
       const hash = await ctx.context.password.hash(password);
-      const createdUser = await ctx.context.internalAdapter.createUser({
-        email: normalizedEmail,
-        name,
-        image,
-        emailVerified: false,
-        tenantId: tenant.id,
-      });
+      let createdUser;
+      try {
+        createdUser = await ctx.context.internalAdapter.createUser({
+          email: normalizedEmail,
+          name,
+          image,
+          emailVerified: false,
+          tenantId: tenant.id,
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error)) {
+          throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.USER_ALREADY_EXISTS);
+        }
+        throw error;
+      }
       if (!createdUser) {
         throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
       }

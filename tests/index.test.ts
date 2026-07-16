@@ -150,6 +150,14 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
       expect(ownedTenant.ownerId).toBe(ownerSignUp.response.user.id);
+
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: ownedTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members).toHaveLength(1);
+      expect(members[0]!.userId).toBe(ownerSignUp.response.user.id);
+      expect(members[0]!.role).toBe("owner");
     });
 
     it("should list only owned tenants for a platform user", async () => {
@@ -248,6 +256,165 @@ describe("tenant-auth", async () => {
       await expect(auth.api.getTenant({ query: { id: ownedTenant.id } })).rejects.toMatchObject({
         body: { code: "TENANT_NOT_FOUND" },
       });
+    });
+  });
+
+  describe("tenant membership RBAC", () => {
+    const ownerHeaders = new Headers();
+    const adminHeadersLocal = new Headers();
+    const memberHeaders = new Headers();
+    let rbacTenant: { id: string };
+    let ownerUserId: string;
+    let adminUserId: string;
+    let memberUserId: string;
+
+    it("should set up owner, admin, and member", async () => {
+      const owner = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Owner",
+          email: "rbac-owner@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      ownerUserId = owner.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        owner.headers.get("set-cookie") || "",
+      ).entries()) {
+        ownerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      rbacTenant = await auth.api.createTenant({
+        body: { name: "RBAC Co", slug: "rbac-co" },
+        headers: ownerHeaders,
+      });
+
+      const admin = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Admin",
+          email: "rbac-admin@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      adminUserId = admin.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        admin.headers.get("set-cookie") || "",
+      ).entries()) {
+        adminHeadersLocal.append("cookie", `${name}=${value}`);
+      }
+
+      const member = await auth.api.signUpEmail({
+        body: {
+          name: "RBAC Member",
+          email: "rbac-member@platform.com",
+          password: "password",
+        },
+        returnHeaders: true,
+      });
+      memberUserId = member.response.user.id;
+      for (const [name, { value }] of parseSetCookieHeader(
+        member.headers.get("set-cookie") || "",
+      ).entries()) {
+        memberHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      await auth.api.addTenantMember({
+        body: { tenantId: rbacTenant.id, userId: adminUserId, role: "admin" },
+        headers: ownerHeaders,
+      });
+      await auth.api.addTenantMember({
+        body: {
+          tenantId: rbacTenant.id,
+          email: "rbac-member@platform.com",
+          role: "member",
+        },
+        headers: ownerHeaders,
+      });
+    });
+
+    it("should let an admin update the tenant but not delete it", async () => {
+      const updated = await auth.api.updateTenant({
+        body: { id: rbacTenant.id, data: { name: "RBAC Co Renamed" } },
+        headers: adminHeadersLocal,
+      });
+      expect(updated.name).toBe("RBAC Co Renamed");
+
+      await expect(
+        auth.api.deleteTenant({
+          body: { id: rbacTenant.id },
+          headers: adminHeadersLocal,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should let members list members but not update the tenant", async () => {
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: rbacTenant.id },
+        headers: memberHeaders,
+      });
+      expect(members.length).toBe(3);
+
+      await expect(
+        auth.api.updateTenant({
+          body: { id: rbacTenant.id, data: { name: "Nope" } },
+          headers: memberHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should prevent admins from adding owners", async () => {
+      const extra = await auth.api.signUpEmail({
+        body: {
+          name: "Extra",
+          email: "rbac-extra@platform.com",
+          password: "password",
+        },
+      });
+      await expect(
+        auth.api.addTenantMember({
+          body: {
+            tenantId: rbacTenant.id,
+            userId: extra.user.id,
+            role: "owner",
+          },
+          headers: adminHeadersLocal,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "TENANT_MANAGEMENT_NOT_ALLOWED" },
+      });
+    });
+
+    it("should list the tenant for all members", async () => {
+      const forMember = await auth.api.listTenants({ headers: memberHeaders });
+      expect(forMember.some((t) => t.id === rbacTenant.id)).toBe(true);
+    });
+
+    it("should prevent removing the last owner", async () => {
+      await expect(
+        auth.api.removeTenantMember({
+          body: { tenantId: rbacTenant.id, userId: ownerUserId },
+          headers: ownerHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "CANNOT_REMOVE_LAST_OWNER" },
+      });
+    });
+
+    it("should let the owner remove a member", async () => {
+      await auth.api.removeTenantMember({
+        body: { tenantId: rbacTenant.id, userId: memberUserId },
+        headers: ownerHeaders,
+      });
+      const members = await auth.api.listTenantMembers({
+        query: { tenantId: rbacTenant.id },
+        headers: ownerHeaders,
+      });
+      expect(members.some((m) => m.userId === memberUserId)).toBe(false);
     });
   });
 

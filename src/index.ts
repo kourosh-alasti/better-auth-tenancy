@@ -2,6 +2,12 @@ import { mergeSchema } from "better-auth/db";
 import { TENANT_AUTH_ERROR_CODES } from "./error-codes";
 import { signInEmailTenant, signUpEmailTenant } from "./routes/email";
 import {
+  addTenantMember,
+  listTenantMembers,
+  removeTenantMember,
+  updateTenantMember,
+} from "./routes/members";
+import {
   callbackTenantOAuth,
   deleteTenantOAuthConfig,
   listTenantOAuthConfigs,
@@ -10,7 +16,13 @@ import {
 } from "./routes/oauth";
 import { createTenant, deleteTenant, getTenant, listTenants, updateTenant } from "./routes/tenants";
 import { getSchema } from "./schema";
-import type { Tenant, TenantAuthOptions, TenantOAuthConfig } from "./types";
+import type {
+  Tenant,
+  TenantAuthOptions,
+  TenantMember,
+  TenantOAuthConfig,
+  TenantRole,
+} from "./types";
 import { PACKAGE_VERSION } from "./version";
 
 declare module "@better-auth/core" {
@@ -27,6 +39,7 @@ export { TENANT_AUTH_ERROR_CODES } from "./error-codes";
  * Multi-tenant authentication plugin for Better Auth.
  *
  * - Adds a `tenant` table and tenant management endpoints.
+ * - Adds `tenantMember` for platform-user roles (owner / admin / member).
  * - Adds a `tenantId` column to the `user`, `session`, `account` and
  *   `verification` tables.
  * - Adds tenant-scoped sign-up / sign-in endpoints where the same email
@@ -45,6 +58,10 @@ export const tenantAuth = (options?: TenantAuthOptions) => {
       listTenants: listTenants(options),
       updateTenant: updateTenant(options),
       deleteTenant: deleteTenant(options),
+      addTenantMember: addTenantMember(options),
+      listTenantMembers: listTenantMembers(options),
+      updateTenantMember: updateTenantMember(options),
+      removeTenantMember: removeTenantMember(options),
       signUpEmailTenant: signUpEmailTenant(options),
       signInEmailTenant: signInEmailTenant(options),
       registerTenantOAuthConfig: registerTenantOAuthConfig(options),
@@ -59,4 +76,4 @@ export const tenantAuth = (options?: TenantAuthOptions) => {
   };
 };
 
-export type { Tenant, TenantAuthOptions, TenantOAuthConfig };
+export type { Tenant, TenantAuthOptions, TenantMember, TenantOAuthConfig, TenantRole };

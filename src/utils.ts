@@ -4,9 +4,29 @@ import type { SocialProviderList } from "@better-auth/core/social-providers";
 
 import { socialProviders } from "@better-auth/core/social-providers";
 import { APIError, getSessionFromCtx } from "better-auth/api";
-import { TENANT_AUTH_ERROR_CODES } from "./error-codes.ts";
-import type { Tenant, TenantAuthOptions, TenantOAuthConfig } from "./types.ts";
 import { symmetricDecrypt, symmetricEncrypt } from "better-auth/crypto";
+import { TENANT_AUTH_ERROR_CODES } from "./error-codes.ts";
+import type {
+  Tenant,
+  TenantAuthOptions,
+  TenantMember,
+  TenantOAuthConfig,
+  TenantRole,
+} from "./types.ts";
+
+const ROLE_RANK: Record<TenantRole, number> = {
+  owner: 3,
+  admin: 2,
+  member: 1,
+};
+
+export function isTenantRole(value: string): value is TenantRole {
+  return value === "owner" || value === "admin" || value === "member";
+}
+
+export function roleAtLeast(role: TenantRole, minimum: TenantRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[minimum];
+}
 
 /**
  * Encrypts an OAuth credential (client id / client secret) for storage
@@ -89,11 +109,11 @@ export async function requireTenant(
  * Result of resolving who may manage tenants.
  *
  * - `global` — `canManageTenants` returned true (operator / API key)
- * - `owner` — authenticated platform user; may only manage owned tenants
+ * - `user` — authenticated platform user; access is per-tenant via membership
  */
 export type ManagementAccess =
   | { kind: "global"; userId: string | null }
-  | { kind: "owner"; userId: string };
+  | { kind: "user"; userId: string };
 
 type SessionUser = { id: string; tenantId?: string | null | undefined };
 
@@ -102,7 +122,7 @@ type SessionUser = { id: string; tenantId?: string | null | undefined };
  *
  * Order:
  * 1. `canManageTenants` returning true → global access
- * 2. Authenticated platform user (`user.tenantId` null) → owner access
+ * 2. Authenticated platform user (`user.tenantId` null) → per-tenant membership
  * 3. Otherwise deny (no “any session is admin” fallback)
  */
 export async function resolveManagementAccess(
@@ -129,17 +149,106 @@ export async function resolveManagementAccess(
     throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
   }
 
-  return { kind: "owner", userId: user.id };
+  return { kind: "user", userId: user.id };
+}
+
+export async function findTenantMember(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+  userId: string,
+): Promise<TenantMember | null> {
+  return await ctx.context.adapter.findOne<TenantMember>({
+    model: "tenantMember",
+    where: [
+      { field: "tenantId", value: tenantId },
+      { field: "userId", value: userId },
+    ],
+  });
 }
 
 /**
- * Ensures the caller may manage a specific tenant. Global access always
- * passes; owner access requires `tenant.ownerId === access.userId`.
+ * Resolves the caller's role on a tenant. Prefers `tenantMember`; falls
+ * back to `tenant.ownerId` for rows created before membership existed.
  */
-export function assertCanManageTenant(access: ManagementAccess, tenant: Tenant): void {
+export async function resolveTenantRole(
+  ctx: GenericEndpointContext,
+  tenant: Tenant,
+  userId: string,
+): Promise<TenantRole | null> {
+  const member = await findTenantMember(ctx, tenant.id, userId);
+  if (member && isTenantRole(member.role)) {
+    return member.role;
+  }
+  if (tenant.ownerId && tenant.ownerId === userId) {
+    return "owner";
+  }
+  return null;
+}
+
+/**
+ * Ensures the caller may manage a specific tenant at least at
+ * `minimumRole`. Global access always passes.
+ */
+export async function assertCanManageTenant(
+  ctx: GenericEndpointContext,
+  access: ManagementAccess,
+  tenant: Tenant,
+  minimumRole: TenantRole = "admin",
+): Promise<void> {
   if (access.kind === "global") return;
-  if (tenant.ownerId && tenant.ownerId === access.userId) return;
-  throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_NOT_OWNED);
+
+  const role = await resolveTenantRole(ctx, tenant, access.userId);
+  if (!role) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_NOT_OWNED);
+  }
+  if (!roleAtLeast(role, minimumRole)) {
+    throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
+  }
+}
+
+/**
+ * Creates an owner membership for a platform user on a newly created tenant.
+ */
+export async function createOwnerMembership(
+  ctx: GenericEndpointContext,
+  tenantId: string,
+  userId: string,
+): Promise<TenantMember> {
+  return await ctx.context.adapter.create<Omit<TenantMember, "id">, TenantMember>({
+    model: "tenantMember",
+    data: {
+      tenantId,
+      userId,
+      role: "owner",
+      createdAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Tenant ids the platform user can see (membership + legacy ownerId).
+ */
+export async function listAccessibleTenantIds(
+  ctx: GenericEndpointContext,
+  userId: string,
+): Promise<string[]> {
+  const [memberships, owned] = await Promise.all([
+    ctx.context.adapter.findMany<TenantMember>({
+      model: "tenantMember",
+      where: [{ field: "userId", value: userId }],
+    }),
+    ctx.context.adapter.findMany<Tenant>({
+      model: "tenant",
+      where: [{ field: "ownerId", value: userId }],
+    }),
+  ]);
+
+  return [
+    ...new Set([
+      ...memberships.map((m: TenantMember) => m.tenantId),
+      ...owned.map((t: Tenant) => t.id),
+    ]),
+  ];
 }
 
 export async function findTenantOAuthConfig(
@@ -197,4 +306,20 @@ export async function resolveTenantProvider(
   }
 
   throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.PROVIDER_NOT_FOUND);
+}
+
+/**
+ * Returns true when an adapter error looks like a unique constraint
+ * violation (used to map races to USER_ALREADY_EXISTS).
+ */
+export function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const message = "message" in error ? String((error as { message: unknown }).message) : "";
+  const code = "code" in error ? String((error as { code: unknown }).code) : "";
+  return (
+    /unique/i.test(message) ||
+    code === "23505" ||
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    code === "ER_DUP_ENTRY"
+  );
 }

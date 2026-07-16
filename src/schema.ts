@@ -13,6 +13,15 @@ const tenantIdReference = (options?: TenantAuthOptions): DBFieldAttribute => ({
   },
 });
 
+/**
+ * Plugin schema for multi-tenancy.
+ *
+ * Better Auth's schema DSL does not generate composite unique indexes.
+ * Applications must add these in their ORM / migrations (see docs):
+ * - `user`: unique (email) where tenantId is null; unique (email, tenantId) where tenantId is not null
+ * - `tenantOauthConfig`: unique (tenantId, providerId)
+ * - `tenantMember`: unique (tenantId, userId)
+ */
 export const getSchema = (options?: TenantAuthOptions) => {
   return {
     tenant: {
@@ -56,6 +65,40 @@ export const getSchema = (options?: TenantAuthOptions) => {
         },
       },
     },
+    tenantMember: {
+      fields: {
+        tenantId: {
+          type: "string",
+          required: true,
+          index: true,
+          references: {
+            model: options?.schema?.tenant?.modelName || "tenant",
+            field: "id",
+            onDelete: "cascade",
+          },
+        },
+        userId: {
+          type: "string",
+          required: true,
+          index: true,
+          references: {
+            model: "user",
+            field: "id",
+            onDelete: "cascade",
+          },
+        },
+        role: {
+          type: "string",
+          required: true,
+          defaultValue: "member",
+        },
+        createdAt: {
+          type: "date",
+          required: true,
+          defaultValue: () => new Date(),
+        },
+      },
+    },
     tenantOauthConfig: {
       fields: {
         tenantId: {
@@ -71,6 +114,7 @@ export const getSchema = (options?: TenantAuthOptions) => {
         providerId: {
           type: "string",
           required: true,
+          index: true,
         },
         clientId: {
           type: "string",
@@ -112,10 +156,10 @@ export const getSchema = (options?: TenantAuthOptions) => {
         tenantId: tenantIdReference(options),
         // Drop the global unique constraint on `user.email` so the same
         // email can exist as separate users under different tenants.
-        // Per-tenant uniqueness (and presence) is enforced by the
-        // plugin's endpoints. `required` must stay `false` here so the
-        // field isn't treated as a required additional input field by
-        // the core sign-up flow.
+        // Per-tenant / platform uniqueness must be enforced with composite
+        // or partial unique indexes in the app schema (see docs).
+        // `required` must stay `false` here so the field isn't treated as
+        // a required additional input field by the core sign-up flow.
         ...(options?.keepEmailGloballyUnique
           ? {}
           : {
