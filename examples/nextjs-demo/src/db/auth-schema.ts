@@ -96,17 +96,24 @@ export const verification = pgTable(
   ],
 );
 
-export const tenant = pgTable("tenant", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  metadata: text("metadata"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at")
-    .defaultNow()
-    .$onUpdate(() => /* @__PURE__ */ new Date())
-    .notNull(),
-});
+export const tenant = pgTable(
+  "tenant",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    ownerId: text("owner_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    metadata: text("metadata"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("tenant_ownerId_idx").on(table.ownerId)],
+);
 
 export const tenantOauthConfig = pgTable(
   "tenant_oauth_config",
@@ -161,7 +168,11 @@ export const accountRelations = relations(account, ({ one }) => ({
   }),
 }));
 
-export const tenantRelations = relations(tenant, ({ many }) => ({
+export const tenantRelations = relations(tenant, ({ many, one }) => ({
+  owner: one(user, {
+    fields: [tenant.ownerId],
+    references: [user.id],
+  }),
   users: many(user),
   sessions: many(session),
   accounts: many(account),
