@@ -16,6 +16,8 @@ tenantAuth({
     /* ... */
   },
   enforceSessionTenant: true,
+  reservedSlugs: ["my-app-route"],
+  exposeTenantDetailsPublicly: false,
   schema: {
     /* custom model/field names */
   },
@@ -115,6 +117,24 @@ tenantAuth({
 
 Set `enforceSessionTenant: false` to disable this check entirely (e.g. while migrating).
 
+## `reservedSlugs`
+
+Tenant slugs are always validated against DNS-label rules: 2–63 characters, lowercase letters / digits / hyphens, no leading or trailing hyphen (`INVALID_SLUG` otherwise). This keeps slugs safe to use as subdomains (`shop.app.com`) or path segments (`/t/shop`).
+
+A built-in reserved list (`admin`, `api`, `app`, `auth`, `www`, `mail`, `dashboard`, `login`, `signup`, ...) blocks slugs that would collide with common routes and subdomains (`SLUG_RESERVED`). Use `reservedSlugs` to extend it with app-specific values:
+
+```ts
+tenantAuth({
+  reservedSlugs: ["pricing", "careers", "cdn"],
+});
+```
+
+## `exposeTenantDetailsPublicly`
+
+`GET /tenant/get` is a public endpoint (tenant login pages need it to resolve a slug before any session exists). By default, unauthorized callers receive only the safe subset — `id`, `name`, `slug`, `createdAt` — while `ownerId` and `metadata` are reserved for tenant members and global admins.
+
+Set this to `true` only if your tenant `metadata` contains nothing sensitive and you want it available publicly (e.g. for theming a login page).
+
 ## `schema`
 
 Pass a custom Better Auth plugin schema to rename models or fields. The plugin merges your overrides with its default schema via `mergeSchema`.
@@ -129,6 +149,8 @@ interface TenantAuthOptions {
   canManageTenants?: (ctx: GenericEndpointContext) => Awaitable<boolean>;
   isPlatformRequest?: (ctx: GenericEndpointContext) => Awaitable<boolean>;
   enforceSessionTenant?: boolean; // default: true
+  reservedSlugs?: string[];
+  exposeTenantDetailsPublicly?: boolean; // default: false
   schema?: BetterAuthPluginDBSchema;
 }
 ```

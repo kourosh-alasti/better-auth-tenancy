@@ -117,6 +117,128 @@ describe("tenant-auth", async () => {
     });
   });
 
+  describe("slug validation", () => {
+    it("should reject invalid slug formats on create", async () => {
+      for (const slug of ["Bad-Slug", "under_score", "-leading", "trailing-", "a", "sp ace"]) {
+        await expect(
+          auth.api.createTenant({
+            body: { name: "Invalid", slug },
+            headers: adminHeaders,
+          }),
+        ).rejects.toMatchObject({
+          body: { code: "INVALID_SLUG" },
+        });
+      }
+    });
+
+    it("should reject reserved slugs", async () => {
+      for (const slug of ["admin", "api", "www", "auth"]) {
+        await expect(
+          auth.api.createTenant({
+            body: { name: "Reserved", slug },
+            headers: adminHeaders,
+          }),
+        ).rejects.toMatchObject({
+          body: { code: "SLUG_RESERVED" },
+        });
+      }
+    });
+
+    it("should reject invalid or reserved slugs on update", async () => {
+      await expect(
+        auth.api.updateTenant({
+          body: { id: tenantA.id, data: { slug: "Bad Slug" } },
+          headers: adminHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "INVALID_SLUG" },
+      });
+      await expect(
+        auth.api.updateTenant({
+          body: { id: tenantA.id, data: { slug: "admin" } },
+          headers: adminHeaders,
+        }),
+      ).rejects.toMatchObject({
+        body: { code: "SLUG_RESERVED" },
+      });
+    });
+  });
+
+  describe("public tenant DTO", () => {
+    const dtoOwnerHeaders = new Headers();
+    let dtoTenant: { id: string };
+
+    it("should hide ownerId and metadata from unauthorized callers", async () => {
+      const signUp = await auth.api.signUpEmail({
+        body: {
+          name: "DTO Owner",
+          email: "dto-owner@platform.com",
+          password: "dto-owner-password",
+        },
+        returnHeaders: true,
+      });
+      const cookies = parseSetCookieHeader(signUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of cookies.entries()) {
+        dtoOwnerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      dtoTenant = await auth.api.createTenant({
+        body: { name: "DTO Co", slug: "dto-co", metadata: { plan: "enterprise" } },
+        headers: dtoOwnerHeaders,
+      });
+
+      const publicTenant = (await auth.api.getTenant({
+        query: { id: dtoTenant.id },
+      })) as Record<string, unknown>;
+      expect(publicTenant.id).toBe(dtoTenant.id);
+      expect(publicTenant.name).toBe("DTO Co");
+      expect(publicTenant.slug).toBe("dto-co");
+      expect(publicTenant.ownerId).toBeUndefined();
+      expect(publicTenant.metadata).toBeUndefined();
+    });
+
+    it("should return the full record to a member of the tenant", async () => {
+      const full = (await auth.api.getTenant({
+        query: { id: dtoTenant.id },
+        headers: dtoOwnerHeaders,
+      })) as Record<string, unknown>;
+      expect(full.ownerId).toBeDefined();
+      expect(full.metadata).toBeDefined();
+    });
+
+    it("should return the full record to a global admin", async () => {
+      const full = (await auth.api.getTenant({
+        query: { id: dtoTenant.id },
+        headers: adminHeaders,
+      })) as Record<string, unknown>;
+      expect(full.ownerId).toBeDefined();
+      expect(full.metadata).toBeDefined();
+    });
+
+    it("should hide details from an unrelated platform user", async () => {
+      const signUp = await auth.api.signUpEmail({
+        body: {
+          name: "DTO Stranger",
+          email: "dto-stranger@platform.com",
+          password: "dto-stranger-password",
+        },
+        returnHeaders: true,
+      });
+      const strangerHeaders = new Headers();
+      const cookies = parseSetCookieHeader(signUp.headers.get("set-cookie") || "");
+      for (const [name, { value }] of cookies.entries()) {
+        strangerHeaders.append("cookie", `${name}=${value}`);
+      }
+
+      const publicTenant = (await auth.api.getTenant({
+        query: { id: dtoTenant.id },
+        headers: strangerHeaders,
+      })) as Record<string, unknown>;
+      expect(publicTenant.ownerId).toBeUndefined();
+      expect(publicTenant.metadata).toBeUndefined();
+    });
+  });
+
   describe("tenant ownership", () => {
     const ownerHeaders = new Headers();
     const otherHeaders = new Headers();

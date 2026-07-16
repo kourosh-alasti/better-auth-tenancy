@@ -24,7 +24,11 @@ Create a new tenant. The authenticated platform user’s id is stored as `ownerI
 
 ### `GET /tenant/get`
 
-Get a tenant by id or slug.
+Get a tenant by id or slug. This endpoint is public, but the response depends on the caller:
+
+- Unauthorized callers (and unrelated platform users) receive only the public fields: `id`, `name`, `slug`, `createdAt`.
+- Tenant members and global admins (`canManageTenants`) receive the full record, including `ownerId` and `metadata`.
+- Set `exposeTenantDetailsPublicly: true` to always return the full record (not recommended if `metadata` holds private data).
 
 **Query**
 
@@ -33,7 +37,7 @@ Get a tenant by id or slug.
 | `id`   | `string` | one of   | Tenant id   |
 | `slug` | `string` | one of   | Tenant slug |
 
-**Response:** Tenant object
+**Response:** Tenant object (public subset for unauthorized callers)
 
 ---
 

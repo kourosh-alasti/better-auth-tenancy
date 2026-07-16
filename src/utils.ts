@@ -165,6 +165,73 @@ export function assertTrustedRedirectURL(
 }
 
 /**
+ * Slug format: 2-63 chars, lowercase letters / digits / hyphens, no
+ * leading or trailing hyphen. Mirrors DNS-label rules so slugs are safe
+ * for subdomains (`shop.app.com`) and path segments (`/t/shop`).
+ */
+const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Slugs that would collide with common app/infrastructure routes and
+ * subdomains. Extend via `options.reservedSlugs`.
+ */
+const DEFAULT_RESERVED_SLUGS = new Set([
+  "admin",
+  "api",
+  "app",
+  "assets",
+  "auth",
+  "billing",
+  "blog",
+  "dashboard",
+  "docs",
+  "help",
+  "internal",
+  "login",
+  "logout",
+  "mail",
+  "platform",
+  "settings",
+  "sign-in",
+  "sign-up",
+  "signin",
+  "signup",
+  "static",
+  "status",
+  "support",
+  "tenant",
+  "tenants",
+  "www",
+]);
+
+/**
+ * Validates a tenant slug's format and rejects reserved values.
+ * Throws `INVALID_SLUG` / `SLUG_RESERVED`.
+ */
+export function assertValidSlug(slug: string, options?: TenantAuthOptions): void {
+  if (slug.length < 2 || !SLUG_PATTERN.test(slug)) {
+    throw APIError.from("BAD_REQUEST", TENANT_AUTH_ERROR_CODES.INVALID_SLUG);
+  }
+  if (DEFAULT_RESERVED_SLUGS.has(slug) || options?.reservedSlugs?.includes(slug)) {
+    throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.SLUG_RESERVED);
+  }
+}
+
+/**
+ * Public projection of a tenant for unauthorized callers: excludes
+ * `ownerId` and `metadata` (which may hold private data like plan or
+ * billing details).
+ */
+export function toPublicTenant(tenant: Tenant): Pick<Tenant, "id" | "name" | "slug" | "createdAt"> {
+  return {
+    id: tenant.id,
+    name: tenant.name,
+    slug: tenant.slug,
+    createdAt: tenant.createdAt,
+  };
+}
+
+/**
  * Resolves the tenant id and ensures the tenant exists.
  */
 export async function requireTenant(
@@ -283,6 +350,27 @@ export async function assertCanManageTenant(
   if (!roleAtLeast(role, minimumRole)) {
     throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.TENANT_MANAGEMENT_NOT_ALLOWED);
   }
+}
+
+/**
+ * Non-throwing probe used by the public `GET /tenant/get` endpoint:
+ * `true` when the caller is a global admin (`canManageTenants`) or a
+ * platform user with any role on the tenant.
+ */
+export async function canViewTenantDetails(
+  ctx: GenericEndpointContext,
+  tenant: Tenant,
+  options?: TenantAuthOptions,
+): Promise<boolean> {
+  if (options?.canManageTenants && (await options.canManageTenants(ctx))) {
+    return true;
+  }
+  const session = await getSessionFromCtx(ctx);
+  const user = session?.user as SessionUser | undefined;
+  if (!user || user.tenantId) {
+    return false;
+  }
+  return (await resolveTenantRole(ctx, tenant, user.id)) !== null;
 }
 
 /**

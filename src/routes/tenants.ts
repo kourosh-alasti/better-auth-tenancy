@@ -4,9 +4,12 @@ import { TENANT_AUTH_ERROR_CODES } from "./../error-codes";
 import type { Tenant, TenantAuthOptions } from "./../types";
 import {
   assertCanManageTenant,
+  assertValidSlug,
+  canViewTenantDetails,
   createOwnerMembership,
   listAccessibleTenantIds,
   resolveManagementAccess,
+  toPublicTenant,
 } from "./../utils";
 
 export const createTenant = (options?: TenantAuthOptions) =>
@@ -38,6 +41,7 @@ export const createTenant = (options?: TenantAuthOptions) =>
     },
     async (ctx) => {
       const access = await resolveManagementAccess(ctx, options);
+      assertValidSlug(ctx.body.slug, options);
       const existing = await ctx.context.adapter.findOne<Tenant>({
         model: "tenant",
         where: [{ field: "slug", value: ctx.body.slug }],
@@ -63,7 +67,7 @@ export const createTenant = (options?: TenantAuthOptions) =>
     },
   );
 
-export const getTenant = () =>
+export const getTenant = (options?: TenantAuthOptions) =>
   createAuthEndpoint(
     "/tenant/get",
     {
@@ -76,7 +80,8 @@ export const getTenant = () =>
       metadata: {
         openapi: {
           operationId: "getTenant",
-          description: "Get a tenant by id or slug",
+          description:
+            "Get a tenant by id or slug. Unauthorized callers receive only the public fields (id, name, slug, createdAt)",
         },
       },
     },
@@ -92,7 +97,13 @@ export const getTenant = () =>
       if (!tenant) {
         throw APIError.from("NOT_FOUND", TENANT_AUTH_ERROR_CODES.TENANT_NOT_FOUND);
       }
-      return ctx.json(tenant);
+      if (
+        options?.exposeTenantDetailsPublicly ||
+        (await canViewTenantDetails(ctx, tenant, options))
+      ) {
+        return ctx.json(tenant);
+      }
+      return ctx.json(toPublicTenant(tenant));
     },
   );
 
@@ -162,6 +173,7 @@ export const updateTenant = (options?: TenantAuthOptions) =>
       }
       await assertCanManageTenant(ctx, access, tenant, "admin");
       if (ctx.body.data.slug && ctx.body.data.slug !== tenant.slug) {
+        assertValidSlug(ctx.body.data.slug, options);
         const existing = await ctx.context.adapter.findOne<Tenant>({
           model: "tenant",
           where: [{ field: "slug", value: ctx.body.data.slug }],
