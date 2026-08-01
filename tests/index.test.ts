@@ -1566,6 +1566,88 @@ describe("tenant-auth", async () => {
         expect(response.status).toBe(302);
         expect(response.headers.get("location")).toBe("/welcome");
       });
+
+      it("should reject OAuth registration with an already-consumed invite", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-consumed@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        // First registration consumes the invite
+        const response1 = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-consumed-1",
+            email: "oauth-consumed@example.com",
+            name: "First User",
+          },
+        });
+        expect(response1.status).toBe(302);
+        expect(response1.headers.get("location")).toBe("/welcome");
+
+        // Second registration with the same invite should fail
+        const response2 = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-consumed-2",
+            email: "oauth-consumed@example.com",
+            name: "Second User",
+          },
+        });
+        expect(response2.status).toBe(302);
+        const location = response2.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_invalid");
+
+        // Verify only one user was created
+        const ctx = await inviteOAuthAuth.$context;
+        const users = await ctx.adapter.findMany<{ id: string }>({
+          model: "user",
+          where: [
+            { field: "email", value: "oauth-consumed@example.com" },
+            { field: "tenantId", value: inviteOAuthTenant.id },
+          ],
+        });
+        expect(users.length).toBe(1);
+      });
+
+      it("should reject OAuth registration with a revoked invite", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-revoked@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        // Revoke the invite
+        await inviteOAuthAuth.api.revokeTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            inviteId: invite.id,
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-revoked",
+            email: "oauth-revoked@example.com",
+            name: "Revoked User",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_invalid");
+      });
     });
 
     describe("domain allowlist OAuth registration", async () => {

@@ -13,6 +13,8 @@ import {
   assertTenantSignUpAllowed,
   assertTrustedRedirectURL,
   consumeTenantInvite,
+  consumeTenantInviteConditional,
+  createUserAccountWithInvite,
   decryptCredential,
   encryptCredential,
   findTenantOAuthConfig,
@@ -474,15 +476,18 @@ export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
           }
           // New end-user registration via OAuth must honor the same invite /
           // domain policy as email sign-up.
+
+          // Lookup tenant outside the signup policy catch to preserve tenant_not_found errors
+          const tenant = await ctx.context.adapter.findOne<Tenant>({
+            model: "tenant",
+            where: [{ field: "id", value: tenantId }],
+          });
+          if (!tenant) {
+            redirectOnError(ctx, resolvedErrorURL, "tenant_not_found");
+          }
+
           let pendingInvite: Awaited<ReturnType<typeof assertTenantSignUpAllowed>> = null;
           try {
-            const tenant = await ctx.context.adapter.findOne<Tenant>({
-              model: "tenant",
-              where: [{ field: "id", value: tenantId }],
-            });
-            if (!tenant) {
-              redirectOnError(ctx, resolvedErrorURL, "tenant_not_found");
-            }
             pendingInvite = await assertTenantSignUpAllowed(
               ctx,
               options,
@@ -508,24 +513,28 @@ export const callbackTenantOAuth = (options?: TenantAuthOptions) =>
           }
           isRegister = true;
           try {
-            user = await ctx.context.internalAdapter.createUser({
-              email,
-              name: userInfo.name || "",
-              ...(userInfo.image ? { image: userInfo.image } : {}),
-              emailVerified: userInfo.emailVerified || false,
-              tenantId,
-            });
-            await ctx.context.internalAdapter.createAccount({
-              userId: user.id,
-              providerId,
-              accountId: providerAccountId,
-              ...freshTokens,
-              tenantId,
-            });
-            if (pendingInvite) {
-              await consumeTenantInvite(ctx, pendingInvite);
-            }
+            const result = await createUserAccountWithInvite(
+              ctx,
+              {
+                email,
+                name: userInfo.name || "",
+                ...(userInfo.image ? { image: userInfo.image } : {}),
+                emailVerified: userInfo.emailVerified || false,
+                tenantId,
+              },
+              {
+                providerId,
+                accountId: providerAccountId,
+                ...freshTokens,
+                tenantId,
+              },
+              pendingInvite,
+            );
+            user = result.user;
           } catch (e) {
+            if (isAPIError(e) && e.body?.code === "INVITE_INVALID") {
+              redirectOnError(ctx, resolvedErrorURL, "invite_invalid");
+            }
             ctx.context.logger.error("Unable to create user", e);
             redirectOnError(ctx, resolvedErrorURL, "unable_to_create_user");
           }
