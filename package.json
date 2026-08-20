@@ -23,6 +23,7 @@
   "scripts": {
     "build": "vp pack && vp run nextjs-demo#build",
     "dev": "vp pack --watch",
+    "typecheck": "tsc --noEmit",
     "lint": "vp lint",
     "fmt": "vp fmt --check",
     "test": "vp test tests/index.test.ts",
