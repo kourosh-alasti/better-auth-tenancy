@@ -12,8 +12,6 @@ import {
   assertCanManageTenant,
   assertTenantSignUpAllowed,
   assertTrustedRedirectURL,
-  consumeTenantInvite,
-  consumeTenantInviteConditional,
   createUserAccountWithInvite,
   decryptCredential,
   encryptCredential,

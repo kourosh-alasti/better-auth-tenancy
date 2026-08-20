@@ -1,4 +1,5 @@
 import type { GenericEndpointContext } from "@better-auth/core";
+import { runWithAdapter } from "@better-auth/core/context";
 import type { OAuthProvider, ProviderOptions } from "@better-auth/core/oauth2";
 import type { SocialProviderList } from "@better-auth/core/social-providers";
 import type { Account, User } from "better-auth";
@@ -829,10 +830,7 @@ export function isPendingTenantInvite(invite: TenantInvite): boolean {
 export async function createUserAccountWithInvite(
   ctx: GenericEndpointContext,
   userData: Parameters<typeof ctx.context.internalAdapter.createUser>[0],
-  accountData: Omit<
-    Parameters<typeof ctx.context.internalAdapter.createAccount>[0],
-    "userId"
-  >,
+  accountData: Omit<Parameters<typeof ctx.context.internalAdapter.createAccount>[0], "userId">,
   invite: TenantInvite | null,
 ): Promise<{ user: User; account: Account }> {
   const adapter = ctx.context.adapter;
@@ -840,27 +838,34 @@ export async function createUserAccountWithInvite(
 
   if (transaction) {
     return await transaction(async (trx: TenantAdapter) => {
-      // Consume invite first within the transaction to detect concurrent claims early
-      if (invite) {
-        const consumed = await consumeTenantInviteConditional(ctx, invite, trx);
-        if (!consumed) {
-          throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+      return await runWithAdapter(trx, async () => {
+        // Consume invite first within the transaction to detect concurrent claims early
+        if (invite) {
+          const consumed = await consumeTenantInviteConditional(ctx, invite, trx);
+          if (!consumed) {
+            throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+          }
         }
-      }
 
-      // Create user using the transactional adapter
-      const user = (await trx.create({
-        model: "user",
-        data: userData,
-      })) as User;
-
-      // Create account using the transactional adapter
-      const account = (await trx.create({
-        model: "account",
-        data: { ...accountData, userId: user.id },
-      })) as Account;
-
-      return { user, account };
+        const user = await ctx.context.internalAdapter.createUser(userData);
+        if (!user) {
+          throw APIError.from(
+            "UNPROCESSABLE_ENTITY",
+            TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER,
+          );
+        }
+        const account = await ctx.context.internalAdapter.createAccount({
+          ...accountData,
+          userId: user.id,
+        });
+        if (!account) {
+          throw APIError.from(
+            "UNPROCESSABLE_ENTITY",
+            TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER,
+          );
+        }
+        return { user, account };
+      });
     });
   }
 
@@ -878,10 +883,16 @@ export async function createUserAccountWithInvite(
     }
 
     createdUser = await ctx.context.internalAdapter.createUser(userData);
+    if (!createdUser) {
+      throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
+    }
     createdAccount = await ctx.context.internalAdapter.createAccount({
       ...accountData,
       userId: createdUser.id,
     });
+    if (!createdAccount) {
+      throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
+    }
 
     return { user: createdUser, account: createdAccount };
   } catch (error) {

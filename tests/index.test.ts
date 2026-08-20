@@ -4,7 +4,16 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { tenantAuth } from "../src/index";
 import { tenantAuthClient } from "../src/client";
+import type { Tenant } from "../src/types";
 import * as tenantUtils from "../src/utils";
+
+function asList<T>(result: T[] | { data: T[] }): T[] {
+  return Array.isArray(result) ? result : result.data;
+}
+
+function asTenant(result: Tenant | Pick<Tenant, "id" | "name" | "slug" | "createdAt">): Tenant {
+  return result as Tenant;
+}
 
 const providerMocks = vi.hoisted(() => ({
   validateAuthorizationCode: vi.fn(),
@@ -111,9 +120,11 @@ describe("tenant-auth", async () => {
     });
 
     it("should list tenants", async () => {
-      const tenants = await auth.api.listTenants({
-        headers: adminHeaders,
-      });
+      const tenants = asList(
+        await auth.api.listTenants({
+          headers: adminHeaders,
+        }),
+      );
       expect(tenants.length).toBeGreaterThanOrEqual(2);
     });
   });
@@ -274,17 +285,19 @@ describe("tenant-auth", async () => {
       });
       expect(ownedTenant.ownerId).toBe(ownerSignUp.response.user.id);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: ownedTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: ownedTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members).toHaveLength(1);
       expect(members[0]!.userId).toBe(ownerSignUp.response.user.id);
       expect(members[0]!.role).toBe("owner");
     });
 
     it("should list only owned tenants for a platform user", async () => {
-      const tenants = await auth.api.listTenants({ headers: ownerHeaders });
+      const tenants = asList(await auth.api.listTenants({ headers: ownerHeaders }));
       expect(tenants.every((t) => t.ownerId === ownedTenant.ownerId)).toBe(true);
       expect(tenants.some((t) => t.id === ownedTenant.id)).toBe(true);
       expect(tenants.some((t) => t.id === tenantA.id)).toBe(false);
@@ -474,10 +487,12 @@ describe("tenant-auth", async () => {
     });
 
     it("should let members list members but not update the tenant", async () => {
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: memberHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: memberHeaders,
+        }),
+      );
       expect(members.length).toBe(3);
 
       await expect(
@@ -513,7 +528,7 @@ describe("tenant-auth", async () => {
     });
 
     it("should list the tenant for all members", async () => {
-      const forMember = await auth.api.listTenants({ headers: memberHeaders });
+      const forMember = asList(await auth.api.listTenants({ headers: memberHeaders }));
       expect(forMember.some((t) => t.id === rbacTenant.id)).toBe(true);
     });
 
@@ -527,16 +542,20 @@ describe("tenant-auth", async () => {
         body: { code: "CANNOT_REMOVE_LAST_OWNER" },
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
       expect(members.some((m) => m.userId === ownerUserId && m.role === "owner")).toBe(true);
     });
@@ -551,10 +570,12 @@ describe("tenant-auth", async () => {
         body: { code: "CANNOT_REMOVE_LAST_OWNER" },
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
     });
 
@@ -563,10 +584,12 @@ describe("tenant-auth", async () => {
         body: { tenantId: rbacTenant.id, userId: memberUserId },
         headers: ownerHeaders,
       });
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members.some((m) => m.userId === memberUserId)).toBe(false);
     });
   });
@@ -620,10 +643,12 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
     });
 
@@ -633,16 +658,20 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(coOwnerUserId);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
       expect(members.some((m) => m.userId === coOwnerUserId && m.role === "owner")).toBe(true);
     });
@@ -653,10 +682,12 @@ describe("tenant-auth", async () => {
         headers: coOwnerHeaders,
       });
 
-      const tenantBefore = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenantBefore = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenantBefore.ownerId).toBe(ownerUserId);
 
       await auth.api.removeTenantMember({
@@ -664,10 +695,12 @@ describe("tenant-auth", async () => {
         headers: coOwnerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(coOwnerUserId);
     });
   });
@@ -1134,10 +1167,12 @@ describe("tenant-auth", async () => {
 
       // Member management passes a *target* tenantId while the caller's
       // own session has a null tenantId — this must keep working.
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: tenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: tenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members).toHaveLength(1);
       expect(members[0]!.userId).toBe(owner.response.user.id);
     });
@@ -1429,8 +1464,8 @@ describe("tenant-auth", async () => {
     const adminHeadersLocal = new Headers({ "x-admin": "1" });
 
     const runTenantOAuthCallback = async (
-      oauthAuth: Awaited<ReturnType<typeof getTestInstance>>["auth"],
-      oauthFetch: Awaited<ReturnType<typeof getTestInstance>>["customFetchImpl"],
+      oauthAuth: { api: { signInSocialTenant: (typeof auth.api)["signInSocialTenant"] } },
+      oauthFetch: typeof customFetchImpl,
       opts: {
         tenantId: string;
         inviteToken?: string;
@@ -1589,13 +1624,13 @@ describe("tenant-auth", async () => {
         expect(response1.status).toBe(302);
         expect(response1.headers.get("location")).toBe("/welcome");
 
-        // Second registration with the same invite should fail
+        // Second registration: a different email trying to reuse the consumed token
         const response2 = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
           tenantId: inviteOAuthTenant.id,
           inviteToken: invite.token,
           providerUser: {
             id: "google-consumed-2",
-            email: "oauth-consumed@example.com",
+            email: "oauth-consumed-reuse@example.com",
             name: "Second User",
           },
         });
@@ -1832,6 +1867,7 @@ describe("tenant-auth", async () => {
           updatedAt: new Date(),
           tenantId: null,
         },
+        forceAllowId: true,
       });
       await ctx.adapter.create({
         model: "user",
@@ -1844,6 +1880,7 @@ describe("tenant-auth", async () => {
           updatedAt: new Date(),
           tenantId: null,
         },
+        forceAllowId: true,
       });
 
       await expect(
@@ -1916,6 +1953,7 @@ describe("tenant-auth", async () => {
           createdAt: new Date(),
           updatedAt: new Date(),
         },
+        forceAllowId: true,
       });
     });
 
@@ -1963,6 +2001,7 @@ describe("tenant-auth", async () => {
           createdAt: new Date(),
           updatedAt: new Date(),
         },
+        forceAllowId: true,
       });
 
       const configs = await legacyAuth.api.listTenantOAuthConfigs({
