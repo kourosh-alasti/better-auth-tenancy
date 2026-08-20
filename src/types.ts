@@ -188,14 +188,17 @@ export interface TenantAuthOptions {
    */
   allowLegacyPlaintextCredentials?: boolean | undefined;
   /**
-   * When `true`, tenant email sign-up requires a valid, unconsumed invite
-   * token matching the sign-up email. Default: `false` (open sign-up).
+   * When `true`, new tenant end-user registration (email sign-up and
+   * first-time social/OAuth sign-in) requires a valid, unconsumed invite
+   * token matching the email. Existing users may still sign in without an
+   * invite. Default: `false` (open sign-up).
    */
   requireInviteForTenantSignUp?: boolean | undefined;
   /**
-   * Restrict tenant email sign-up to these email domains when invite is
-   * not required. Ignored when `requireInviteForTenantSignUp` is `true`.
-   * Pass a static list or a per-tenant resolver.
+   * Restrict new tenant end-user registration (email and first-time
+   * social/OAuth) to these email domains when invite is not required.
+   * Ignored when `requireInviteForTenantSignUp` is `true`. Pass a static
+   * list or a per-tenant resolver.
    */
   allowedEmailDomains?:
     | string[]

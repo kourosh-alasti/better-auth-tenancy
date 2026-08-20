@@ -77,12 +77,15 @@ await authClient.signInSocialTenant({
   provider: "google",
   callbackURL: "/welcome", // where to redirect after success
   errorCallbackURL: "/error", // optional
+  inviteToken: "<invite-token>", // required for first-time registration when invite-only is enabled
 });
 ```
 
 Endpoint: `POST /tenant/sign-in/social`
 
 The plugin resolves the provider from the tenant's database config first, then from global `socialProviders`.
+
+When `requireInviteForTenantSignUp` or `allowedEmailDomains` is configured, **first-time** social registration is gated the same way as email sign-up (existing OAuth users can still sign in). Pass `inviteToken` on social sign-in so it can be validated at the callback after the provider returns the email. Failures redirect to `errorCallbackURL` with codes such as `invite_required`, `invite_invalid`, or `email_domain_not_allowed`.
 
 `callbackURL`, `newUserCallbackURL`, and `errorCallbackURL` are all validated against your Better Auth `trustedOrigins` before the OAuth flow starts, and the final redirect target is re-checked at the callback. Relative paths (e.g. `/welcome`) are always allowed; untrusted absolute URLs are rejected with `INVALID_CALLBACK_URL`.
 

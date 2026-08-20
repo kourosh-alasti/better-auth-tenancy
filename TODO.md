@@ -14,7 +14,11 @@
 - demo Drizzle schema includes them
 - sign-up maps unique-constraint races to USER_ALREADY_EXISTS
 
-[] Invites / domain join policies for tenant end-users
+[x] Invites / domain join policies for tenant end-users
+
+- `requireInviteForTenantSignUp` + `allowedEmailDomains`
+- `tenantInvite` create / list / revoke endpoints
+- Enforced on email sign-up and first-time OAuth registration
 
 [x] Session host binding (platform ↔ tenant cookie isolation)
 

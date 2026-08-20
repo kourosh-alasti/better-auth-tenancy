@@ -4,7 +4,16 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { tenantAuth } from "../src/index";
 import { tenantAuthClient } from "../src/client";
+import type { Tenant } from "../src/types";
 import * as tenantUtils from "../src/utils";
+
+function asList<T>(result: T[] | { data: T[] }): T[] {
+  return Array.isArray(result) ? result : result.data;
+}
+
+function asTenant(result: Tenant | Pick<Tenant, "id" | "name" | "slug" | "createdAt">): Tenant {
+  return result as Tenant;
+}
 
 const providerMocks = vi.hoisted(() => ({
   validateAuthorizationCode: vi.fn(),
@@ -111,9 +120,11 @@ describe("tenant-auth", async () => {
     });
 
     it("should list tenants", async () => {
-      const tenants = await auth.api.listTenants({
-        headers: adminHeaders,
-      });
+      const tenants = asList(
+        await auth.api.listTenants({
+          headers: adminHeaders,
+        }),
+      );
       expect(tenants.length).toBeGreaterThanOrEqual(2);
     });
   });
@@ -274,17 +285,19 @@ describe("tenant-auth", async () => {
       });
       expect(ownedTenant.ownerId).toBe(ownerSignUp.response.user.id);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: ownedTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: ownedTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members).toHaveLength(1);
       expect(members[0]!.userId).toBe(ownerSignUp.response.user.id);
       expect(members[0]!.role).toBe("owner");
     });
 
     it("should list only owned tenants for a platform user", async () => {
-      const tenants = await auth.api.listTenants({ headers: ownerHeaders });
+      const tenants = asList(await auth.api.listTenants({ headers: ownerHeaders }));
       expect(tenants.every((t) => t.ownerId === ownedTenant.ownerId)).toBe(true);
       expect(tenants.some((t) => t.id === ownedTenant.id)).toBe(true);
       expect(tenants.some((t) => t.id === tenantA.id)).toBe(false);
@@ -474,10 +487,12 @@ describe("tenant-auth", async () => {
     });
 
     it("should let members list members but not update the tenant", async () => {
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: memberHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: memberHeaders,
+        }),
+      );
       expect(members.length).toBe(3);
 
       await expect(
@@ -513,7 +528,7 @@ describe("tenant-auth", async () => {
     });
 
     it("should list the tenant for all members", async () => {
-      const forMember = await auth.api.listTenants({ headers: memberHeaders });
+      const forMember = asList(await auth.api.listTenants({ headers: memberHeaders }));
       expect(forMember.some((t) => t.id === rbacTenant.id)).toBe(true);
     });
 
@@ -527,16 +542,20 @@ describe("tenant-auth", async () => {
         body: { code: "CANNOT_REMOVE_LAST_OWNER" },
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
       expect(members.some((m) => m.userId === ownerUserId && m.role === "owner")).toBe(true);
     });
@@ -551,10 +570,12 @@ describe("tenant-auth", async () => {
         body: { code: "CANNOT_REMOVE_LAST_OWNER" },
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
     });
 
@@ -563,10 +584,12 @@ describe("tenant-auth", async () => {
         body: { tenantId: rbacTenant.id, userId: memberUserId },
         headers: ownerHeaders,
       });
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: rbacTenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: rbacTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members.some((m) => m.userId === memberUserId)).toBe(false);
     });
   });
@@ -620,10 +643,12 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: ownerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(ownerUserId);
     });
 
@@ -633,16 +658,20 @@ describe("tenant-auth", async () => {
         headers: ownerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(coOwnerUserId);
 
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(members.filter((m) => m.role === "owner")).toHaveLength(1);
       expect(members.some((m) => m.userId === coOwnerUserId && m.role === "owner")).toBe(true);
     });
@@ -653,10 +682,12 @@ describe("tenant-auth", async () => {
         headers: coOwnerHeaders,
       });
 
-      const tenantBefore = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenantBefore = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenantBefore.ownerId).toBe(ownerUserId);
 
       await auth.api.removeTenantMember({
@@ -664,10 +695,12 @@ describe("tenant-auth", async () => {
         headers: coOwnerHeaders,
       });
 
-      const tenant = await auth.api.getTenant({
-        query: { id: durableTenant.id },
-        headers: coOwnerHeaders,
-      });
+      const tenant = asTenant(
+        await auth.api.getTenant({
+          query: { id: durableTenant.id },
+          headers: coOwnerHeaders,
+        }),
+      );
       expect(tenant.ownerId).toBe(coOwnerUserId);
     });
   });
@@ -712,6 +745,206 @@ describe("tenant-auth", async () => {
         where: [{ field: "id", value: "tenant-rollback-test" }],
       });
       expect(logger.error).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("atomic OAuth invite consumption", () => {
+    const pendingInvite = {
+      id: "invite-1",
+      tenantId: "tenant-1",
+      email: "race@example.com",
+      token: "invite-token",
+      invitedBy: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      consumedAt: null,
+      revokedAt: null,
+      createdAt: new Date(),
+    };
+    const userData = {
+      email: "race@example.com",
+      name: "Race",
+      emailVerified: true,
+      tenantId: "tenant-1",
+    };
+    const accountData = {
+      providerId: "google",
+      accountId: "google-race",
+      tenantId: "tenant-1",
+    };
+
+    it("should abort a concurrent claim without creating a user", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let firstStarted!: () => void;
+      const firstEntered = new Promise<void>((resolve) => {
+        firstStarted = resolve;
+      });
+      let secondStarted!: () => void;
+      const secondEntered = new Promise<void>((resolve) => {
+        secondStarted = resolve;
+      });
+      let updateCalls = 0;
+      const adapter = {
+        update: vi.fn(async () => {
+          updateCalls += 1;
+          if (updateCalls === 1) {
+            firstStarted();
+            await gate;
+            return { ...pendingInvite, consumedAt: new Date() };
+          }
+          secondStarted();
+          return null;
+        }),
+        delete: vi.fn(),
+      };
+      const internalAdapter = {
+        createUser: vi.fn(async () => ({ id: "user-1", ...userData })),
+        createAccount: vi.fn(async () => ({ id: "account-1", userId: "user-1", ...accountData })),
+      };
+      const ctx = {
+        context: { adapter, internalAdapter, logger: { error: vi.fn() } },
+      } as unknown as Parameters<typeof tenantUtils.createUserAccountWithInvite>[0];
+
+      const first = tenantUtils.createUserAccountWithInvite(
+        ctx,
+        userData,
+        accountData,
+        pendingInvite,
+      );
+      await firstEntered;
+      const second = tenantUtils.createUserAccountWithInvite(
+        ctx,
+        userData,
+        accountData,
+        pendingInvite,
+      );
+      await secondEntered;
+      release();
+
+      const results = await Promise.allSettled([first, second]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      const rejected = results.find((result) => result.status === "rejected");
+      expect(rejected).toMatchObject({
+        status: "rejected",
+        reason: { body: { code: "INVITE_INVALID" } },
+      });
+      expect(internalAdapter.createUser).toHaveBeenCalledTimes(1);
+      expect(internalAdapter.createAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it("should keep the invite consumed if account creation fails", async () => {
+      const adapter = {
+        update: vi.fn(async () => ({ ...pendingInvite, consumedAt: new Date() })),
+        delete: vi.fn(),
+      };
+      const internalAdapter = {
+        createUser: vi.fn(async () => ({ id: "user-fail", ...userData })),
+        createAccount: vi.fn(async () => {
+          throw new Error("simulated account failure");
+        }),
+      };
+      const ctx = {
+        context: { adapter, internalAdapter, logger: { error: vi.fn() } },
+      } as unknown as Parameters<typeof tenantUtils.createUserAccountWithInvite>[0];
+
+      await expect(
+        tenantUtils.createUserAccountWithInvite(ctx, userData, accountData, pendingInvite),
+      ).rejects.toThrow("simulated account failure");
+
+      expect(adapter.update).toHaveBeenCalledTimes(1);
+      expect(adapter.update).toHaveBeenCalledWith({
+        model: "tenantInvite",
+        where: [
+          { field: "id", value: pendingInvite.id },
+          { field: "consumedAt", value: null },
+          { field: "revokedAt", value: null },
+          { field: "expiresAt", value: expect.any(Date), operator: "gt" },
+        ],
+        update: { consumedAt: expect.any(Date) },
+      });
+      expect(adapter.delete).toHaveBeenCalledWith({
+        model: "user",
+        where: [{ field: "id", value: "user-fail" }],
+      });
+    });
+
+    it("should abort if the invite expires between validation and claim", async () => {
+      vi.useFakeTimers();
+      const validatedAt = new Date("2026-08-20T12:00:00.000Z");
+      vi.setSystemTime(validatedAt);
+
+      const invite = {
+        ...pendingInvite,
+        id: "invite-expires",
+        expiresAt: new Date(validatedAt.getTime() + 500),
+      };
+      const tenant = {
+        id: invite.tenantId,
+        name: "Race Tenant",
+        slug: "race-tenant",
+        createdAt: validatedAt,
+        updatedAt: validatedAt,
+      };
+
+      try {
+        const pending = await tenantUtils.assertTenantSignUpAllowed(
+          {
+            context: { adapter: { findOne: vi.fn(async () => invite) } },
+          } as unknown as Parameters<typeof tenantUtils.assertTenantSignUpAllowed>[0],
+          { requireInviteForTenantSignUp: true },
+          tenant,
+          invite.email,
+          invite.token,
+        );
+        expect(pending?.id).toBe(invite.id);
+
+        const adapter = {
+          update: vi.fn(
+            async (args: { where: { field: string; value: unknown; operator?: string }[] }) => {
+              const expiresAt = args.where.find((clause) => clause.field === "expiresAt");
+              if (
+                !expiresAt ||
+                expiresAt.operator !== "gt" ||
+                !(expiresAt.value instanceof Date) ||
+                invite.expiresAt <= expiresAt.value
+              ) {
+                return null;
+              }
+              return { ...invite, consumedAt: new Date() };
+            },
+          ),
+          delete: vi.fn(),
+        };
+        const internalAdapter = {
+          createUser: vi.fn(),
+          createAccount: vi.fn(),
+        };
+        const ctx = {
+          context: { adapter, internalAdapter, logger: { error: vi.fn() } },
+        } as unknown as Parameters<typeof tenantUtils.createUserAccountWithInvite>[0];
+
+        vi.setSystemTime(validatedAt.getTime() + 1000);
+
+        await expect(
+          tenantUtils.createUserAccountWithInvite(ctx, userData, accountData, pending),
+        ).rejects.toMatchObject({ body: { code: "INVITE_INVALID" } });
+
+        expect(internalAdapter.createUser).not.toHaveBeenCalled();
+        expect(adapter.update).toHaveBeenCalledWith({
+          model: "tenantInvite",
+          where: [
+            { field: "id", value: invite.id },
+            { field: "consumedAt", value: null },
+            { field: "revokedAt", value: null },
+            { field: "expiresAt", value: new Date(validatedAt.getTime() + 1000), operator: "gt" },
+          ],
+          update: { consumedAt: expect.any(Date) },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -1134,10 +1367,12 @@ describe("tenant-auth", async () => {
 
       // Member management passes a *target* tenantId while the caller's
       // own session has a null tenantId — this must keep working.
-      const members = await auth.api.listTenantMembers({
-        query: { tenantId: tenant.id },
-        headers: ownerHeaders,
-      });
+      const members = asList(
+        await auth.api.listTenantMembers({
+          query: { tenantId: tenant.id },
+          headers: ownerHeaders,
+        }),
+      );
       expect(members).toHaveLength(1);
       expect(members[0]!.userId).toBe(owner.response.user.id);
     });
@@ -1425,6 +1660,397 @@ describe("tenant-auth", async () => {
     });
   });
 
+  describe("OAuth sign-up policy", async () => {
+    const adminHeadersLocal = new Headers({ "x-admin": "1" });
+
+    const runTenantOAuthCallback = async (
+      oauthAuth: { api: { signInSocialTenant: (typeof auth.api)["signInSocialTenant"] } },
+      oauthFetch: typeof customFetchImpl,
+      opts: {
+        tenantId: string;
+        inviteToken?: string;
+        providerUser: { id: string; email: string; name: string };
+      },
+    ) => {
+      const { headers: signInHeaders, response: signInRes } =
+        await oauthAuth.api.signInSocialTenant({
+          body: {
+            tenantId: opts.tenantId,
+            provider: "google",
+            callbackURL: "/welcome",
+            errorCallbackURL: "/error",
+            disableRedirect: true,
+            ...(opts.inviteToken ? { inviteToken: opts.inviteToken } : {}),
+          },
+          returnHeaders: true,
+        });
+      const state = new URL(signInRes.url!).searchParams.get("state")!;
+      const cookies = parseSetCookieHeader(signInHeaders.get("set-cookie") || "");
+      const cookieHeader = Array.from(cookies.entries())
+        .map(([name, { value }]) => `${name}=${value}`)
+        .join("; ");
+      providerMocks.validateAuthorizationCode.mockResolvedValue({
+        accessToken: "test-access-token",
+        refreshToken: "test-refresh-token",
+      });
+      providerMocks.getUserInfo.mockResolvedValue({
+        user: {
+          id: opts.providerUser.id,
+          email: opts.providerUser.email,
+          name: opts.providerUser.name,
+          emailVerified: true,
+        },
+        data: {},
+      });
+      return await oauthFetch(
+        `http://localhost:3000/api/auth/tenant/callback/google?code=test-code&state=${encodeURIComponent(state)}`,
+        {
+          method: "GET",
+          redirect: "manual",
+          headers: { cookie: cookieHeader },
+        },
+      );
+    };
+
+    describe("invite-only OAuth registration", async () => {
+      const { auth: inviteOAuthAuth, customFetchImpl: inviteOAuthFetch } = await getTestInstance(
+        {
+          emailAndPassword: { enabled: true },
+          socialProviders: {
+            google: {
+              clientId: "global-client-id",
+              clientSecret: "global-client-secret",
+            },
+          },
+          plugins: [
+            tenantAuth({
+              canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+              requireInviteForTenantSignUp: true,
+            }),
+          ],
+        },
+        { clientOptions: { plugins: [tenantAuthClient()] } },
+      );
+
+      const inviteOAuthTenant = await inviteOAuthAuth.api.createTenant({
+        body: { name: "Invite OAuth", slug: "invite-oauth" },
+        headers: adminHeadersLocal,
+      });
+      await inviteOAuthAuth.api.registerTenantOAuthConfig({
+        body: {
+          tenantId: inviteOAuthTenant.id,
+          providerId: "google",
+          clientId: "invite-oauth-client",
+          clientSecret: "invite-oauth-secret",
+        },
+        headers: adminHeadersLocal,
+      });
+
+      it("should reject first-time OAuth registration without an invite", async () => {
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          providerUser: {
+            id: "google-no-invite",
+            email: "oauth-no-invite@example.com",
+            name: "No Invite",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_required");
+      });
+
+      it("should allow first-time OAuth registration with a valid invite and consume it", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-invited@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-invited",
+            email: "oauth-invited@example.com",
+            name: "Invited OAuth",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+
+        const invites = await inviteOAuthAuth.api.listTenantInvites({
+          query: { tenantId: inviteOAuthTenant.id, includeConsumed: true },
+          headers: adminHeadersLocal,
+        });
+        expect(invites.find((item) => item.id === invite.id)?.consumedAt).toBeTruthy();
+      });
+
+      it("should allow subsequent OAuth sign-in without an invite", async () => {
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          providerUser: {
+            id: "google-invited",
+            email: "oauth-invited@example.com",
+            name: "Invited OAuth",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+      });
+
+      it("should reject OAuth registration with an already-consumed invite", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-consumed@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        // First registration consumes the invite
+        const response1 = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-consumed-1",
+            email: "oauth-consumed@example.com",
+            name: "First User",
+          },
+        });
+        expect(response1.status).toBe(302);
+        expect(response1.headers.get("location")).toBe("/welcome");
+
+        // Second registration: a different email trying to reuse the consumed token
+        const response2 = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-consumed-2",
+            email: "oauth-consumed-reuse@example.com",
+            name: "Second User",
+          },
+        });
+        expect(response2.status).toBe(302);
+        const location = response2.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_invalid");
+
+        // Verify only one user was created
+        const ctx = await inviteOAuthAuth.$context;
+        const users = await ctx.adapter.findMany<{ id: string }>({
+          model: "user",
+          where: [
+            { field: "email", value: "oauth-consumed@example.com" },
+            { field: "tenantId", value: inviteOAuthTenant.id },
+          ],
+        });
+        expect(users.length).toBe(1);
+      });
+
+      it("should reject OAuth registration with a revoked invite", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-revoked@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        // Revoke the invite
+        await inviteOAuthAuth.api.revokeTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            inviteId: invite.id,
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+          tenantId: inviteOAuthTenant.id,
+          inviteToken: invite.token,
+          providerUser: {
+            id: "google-revoked",
+            email: "oauth-revoked@example.com",
+            name: "Revoked User",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=invite_invalid");
+      });
+
+      it("should keep the invite consumed if account creation fails", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-account-fail@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const ctx = await inviteOAuthAuth.$context;
+        const spy = vi
+          .spyOn(ctx.internalAdapter, "createAccount")
+          .mockRejectedValueOnce(new Error("simulated account failure"));
+
+        try {
+          const response = await runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+            tenantId: inviteOAuthTenant.id,
+            inviteToken: invite.token,
+            providerUser: {
+              id: "google-account-fail",
+              email: "oauth-account-fail@example.com",
+              name: "Account Fail",
+            },
+          });
+          expect(response.status).toBe(302);
+          const location = response.headers.get("location")!;
+          expect(location).toContain("/error");
+          expect(location).toContain("error=unable_to_create_user");
+        } finally {
+          spy.mockRestore();
+        }
+
+        const invites = await inviteOAuthAuth.api.listTenantInvites({
+          query: { tenantId: inviteOAuthTenant.id, includeConsumed: true },
+          headers: adminHeadersLocal,
+        });
+        expect(invites.find((item) => item.id === invite.id)?.consumedAt).toBeTruthy();
+
+        const users = await ctx.adapter.findMany<{ id: string }>({
+          model: "user",
+          where: [
+            { field: "email", value: "oauth-account-fail@example.com" },
+            { field: "tenantId", value: inviteOAuthTenant.id },
+          ],
+        });
+        expect(users.length).toBe(0);
+      });
+
+      it("should allow only one concurrent OAuth registration per invite", async () => {
+        const invite = await inviteOAuthAuth.api.createTenantInvite({
+          body: {
+            tenantId: inviteOAuthTenant.id,
+            email: "oauth-race@example.com",
+          },
+          headers: adminHeadersLocal,
+        });
+
+        const [response1, response2] = await Promise.all([
+          runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+            tenantId: inviteOAuthTenant.id,
+            inviteToken: invite.token,
+            providerUser: {
+              id: "google-race",
+              email: "oauth-race@example.com",
+              name: "Race User",
+            },
+          }),
+          runTenantOAuthCallback(inviteOAuthAuth, inviteOAuthFetch, {
+            tenantId: inviteOAuthTenant.id,
+            inviteToken: invite.token,
+            providerUser: {
+              id: "google-race",
+              email: "oauth-race@example.com",
+              name: "Race User",
+            },
+          }),
+        ]);
+
+        const locations = [response1, response2].map((res) => res.headers.get("location") ?? "");
+        expect(locations.some((location) => location === "/welcome")).toBe(true);
+        expect(
+          locations.filter((location) => location === "/welcome").length +
+            locations.filter((location) => location.includes("error=")).length,
+        ).toBe(2);
+
+        const ctx = await inviteOAuthAuth.$context;
+        const users = await ctx.adapter.findMany<{ id: string }>({
+          model: "user",
+          where: [
+            { field: "email", value: "oauth-race@example.com" },
+            { field: "tenantId", value: inviteOAuthTenant.id },
+          ],
+        });
+        expect(users.length).toBe(1);
+
+        const invites = await inviteOAuthAuth.api.listTenantInvites({
+          query: { tenantId: inviteOAuthTenant.id, includeConsumed: true },
+          headers: adminHeadersLocal,
+        });
+        expect(invites.find((item) => item.id === invite.id)?.consumedAt).toBeTruthy();
+      });
+    });
+
+    describe("domain allowlist OAuth registration", async () => {
+      const { auth: domainOAuthAuth, customFetchImpl: domainOAuthFetch } = await getTestInstance(
+        {
+          emailAndPassword: { enabled: true },
+          socialProviders: {
+            google: {
+              clientId: "global-client-id",
+              clientSecret: "global-client-secret",
+            },
+          },
+          plugins: [
+            tenantAuth({
+              canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+              allowedEmailDomains: ["allowed.example"],
+            }),
+          ],
+        },
+        { clientOptions: { plugins: [tenantAuthClient()] } },
+      );
+
+      const domainOAuthTenant = await domainOAuthAuth.api.createTenant({
+        body: { name: "Domain OAuth", slug: "domain-oauth" },
+        headers: adminHeadersLocal,
+      });
+      await domainOAuthAuth.api.registerTenantOAuthConfig({
+        body: {
+          tenantId: domainOAuthTenant.id,
+          providerId: "google",
+          clientId: "domain-oauth-client",
+          clientSecret: "domain-oauth-secret",
+        },
+        headers: adminHeadersLocal,
+      });
+
+      it("should reject OAuth registration when the email domain is not allowlisted", async () => {
+        const response = await runTenantOAuthCallback(domainOAuthAuth, domainOAuthFetch, {
+          tenantId: domainOAuthTenant.id,
+          providerUser: {
+            id: "google-blocked-domain",
+            email: "user@blocked.example",
+            name: "Blocked Domain",
+          },
+        });
+        expect(response.status).toBe(302);
+        const location = response.headers.get("location")!;
+        expect(location).toContain("/error");
+        expect(location).toContain("error=email_domain_not_allowed");
+      });
+
+      it("should allow OAuth registration when the email domain is allowlisted", async () => {
+        const response = await runTenantOAuthCallback(domainOAuthAuth, domainOAuthFetch, {
+          tenantId: domainOAuthTenant.id,
+          providerUser: {
+            id: "google-allowed-domain",
+            email: "user@allowed.example",
+            name: "Allowed Domain",
+          },
+        });
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/welcome");
+      });
+    });
+  });
+
   describe("tenant deletion", () => {
     it("should delete a tenant", async () => {
       const tenant = await auth.api.createTenant({
@@ -1543,6 +2169,7 @@ describe("tenant-auth", async () => {
           updatedAt: new Date(),
           tenantId: null,
         },
+        forceAllowId: true,
       });
       await ctx.adapter.create({
         model: "user",
@@ -1555,6 +2182,7 @@ describe("tenant-auth", async () => {
           updatedAt: new Date(),
           tenantId: null,
         },
+        forceAllowId: true,
       });
 
       await expect(
@@ -1627,6 +2255,7 @@ describe("tenant-auth", async () => {
           createdAt: new Date(),
           updatedAt: new Date(),
         },
+        forceAllowId: true,
       });
     });
 
@@ -1674,6 +2303,7 @@ describe("tenant-auth", async () => {
           createdAt: new Date(),
           updatedAt: new Date(),
         },
+        forceAllowId: true,
       });
 
       const configs = await legacyAuth.api.listTenantOAuthConfigs({

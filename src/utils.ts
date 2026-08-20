@@ -1,6 +1,8 @@
 import type { GenericEndpointContext } from "@better-auth/core";
+import { runWithAdapter } from "@better-auth/core/context";
 import type { OAuthProvider, ProviderOptions } from "@better-auth/core/oauth2";
 import type { SocialProviderList } from "@better-auth/core/social-providers";
+import type { Account, User } from "better-auth";
 
 import { socialProviders } from "@better-auth/core/social-providers";
 import { APIError, getSessionFromCtx } from "better-auth/api";
@@ -789,7 +791,116 @@ export async function consumeTenantInvite(
   });
 }
 
+/**
+ * Conditionally consumes an invite by setting consumedAt only if it is still
+ * pending (consumedAt and revokedAt both null, expiresAt still in the future).
+ * Adapters return the updated row when exactly one record matched and null
+ * otherwise — treat null as an abort (concurrent claim, revoke, or expiry).
+ */
+export async function consumeTenantInviteConditional(
+  ctx: GenericEndpointContext,
+  invite: TenantInvite,
+  adapter?: TenantAdapter,
+): Promise<TenantInvite | null> {
+  const targetAdapter = adapter ?? ctx.context.adapter;
+  return await targetAdapter.update<TenantInvite>({
+    model: "tenantInvite",
+    where: [
+      { field: "id", value: invite.id },
+      { field: "consumedAt", value: null },
+      { field: "revokedAt", value: null },
+      { field: "expiresAt", value: new Date(), operator: "gt" },
+    ],
+    update: { consumedAt: new Date() },
+  });
+}
+
 export function isPendingTenantInvite(invite: TenantInvite): boolean {
   if (invite.consumedAt || invite.revokedAt) return false;
   return invite.expiresAt >= new Date();
+}
+
+/**
+ * Creates a user and account, conditionally consuming an invite when present.
+ *
+ * The invite is claimed first via a compare-and-set update (must match exactly
+ * one pending row). That claim is intentionally not part of the user/account
+ * transaction: concurrent/revoked claims cannot register, and a later
+ * createUser/createAccount failure cannot un-consume the invite.
+ *
+ * User and account creation still run in an adapter transaction when available.
+ * On failure the user/account are deleted as well, so no-op transactions
+ * (adapters that expose `transaction` but do not roll back) cannot leave a
+ * user without an account.
+ */
+export async function createUserAccountWithInvite(
+  ctx: GenericEndpointContext,
+  userData: Parameters<typeof ctx.context.internalAdapter.createUser>[0],
+  accountData: Omit<Parameters<typeof ctx.context.internalAdapter.createAccount>[0], "userId">,
+  invite: TenantInvite | null,
+): Promise<{ user: User; account: Account }> {
+  if (invite) {
+    const consumed = await consumeTenantInviteConditional(ctx, invite);
+    if (!consumed) {
+      throw APIError.from("FORBIDDEN", TENANT_AUTH_ERROR_CODES.INVITE_INVALID);
+    }
+  }
+
+  const created: { user: User | null; account: Account | null } = {
+    user: null,
+    account: null,
+  };
+
+  const createUserAndAccount = async () => {
+    created.user = await ctx.context.internalAdapter.createUser(userData);
+    if (!created.user) {
+      throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
+    }
+    created.account = await ctx.context.internalAdapter.createAccount({
+      ...accountData,
+      userId: created.user.id,
+    });
+    if (!created.account) {
+      throw APIError.from("UNPROCESSABLE_ENTITY", TENANT_AUTH_ERROR_CODES.FAILED_TO_CREATE_USER);
+    }
+    return { user: created.user, account: created.account };
+  };
+
+  try {
+    const transaction = getAdapterTransaction(ctx.context.adapter);
+    if (transaction) {
+      return await transaction(async (trx: TenantAdapter) => {
+        return await runWithAdapter(trx, createUserAndAccount);
+      });
+    }
+    return await createUserAndAccount();
+  } catch (error) {
+    if (created.account) {
+      try {
+        await ctx.context.adapter.delete({
+          model: "account",
+          where: [{ field: "id", value: created.account.id }],
+        });
+      } catch (rollbackError) {
+        ctx.context.logger.error("Failed to rollback account after user creation failed", {
+          accountId: created.account.id,
+          error: rollbackError,
+        });
+      }
+    }
+    if (created.user) {
+      try {
+        await ctx.context.adapter.delete({
+          model: "user",
+          where: [{ field: "id", value: created.user.id }],
+        });
+      } catch (rollbackError) {
+        ctx.context.logger.error("Failed to rollback user after account creation failed", {
+          userId: created.user.id,
+          error: rollbackError,
+        });
+      }
+    }
+    throw error;
+  }
 }
