@@ -793,9 +793,9 @@ export async function consumeTenantInvite(
 
 /**
  * Conditionally consumes an invite by setting consumedAt only if it is still
- * pending (consumedAt and revokedAt both null). Adapters return the updated
- * row when exactly one record matched and null otherwise — treat null as an
- * abort (concurrent claim or revoke).
+ * pending (consumedAt and revokedAt both null, expiresAt still in the future).
+ * Adapters return the updated row when exactly one record matched and null
+ * otherwise — treat null as an abort (concurrent claim, revoke, or expiry).
  */
 export async function consumeTenantInviteConditional(
   ctx: GenericEndpointContext,
@@ -809,6 +809,7 @@ export async function consumeTenantInviteConditional(
       { field: "id", value: invite.id },
       { field: "consumedAt", value: null },
       { field: "revokedAt", value: null },
+      { field: "expiresAt", value: new Date(), operator: "gt" },
     ],
     update: { consumedAt: new Date() },
   });

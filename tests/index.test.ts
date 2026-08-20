@@ -860,6 +860,7 @@ describe("tenant-auth", async () => {
           { field: "id", value: pendingInvite.id },
           { field: "consumedAt", value: null },
           { field: "revokedAt", value: null },
+          { field: "expiresAt", value: expect.any(Date), operator: "gt" },
         ],
         update: { consumedAt: expect.any(Date) },
       });
@@ -867,6 +868,83 @@ describe("tenant-auth", async () => {
         model: "user",
         where: [{ field: "id", value: "user-fail" }],
       });
+    });
+
+    it("should abort if the invite expires between validation and claim", async () => {
+      vi.useFakeTimers();
+      const validatedAt = new Date("2026-08-20T12:00:00.000Z");
+      vi.setSystemTime(validatedAt);
+
+      const invite = {
+        ...pendingInvite,
+        id: "invite-expires",
+        expiresAt: new Date(validatedAt.getTime() + 500),
+      };
+      const tenant = {
+        id: invite.tenantId,
+        name: "Race Tenant",
+        slug: "race-tenant",
+        createdAt: validatedAt,
+        updatedAt: validatedAt,
+      };
+
+      try {
+        const pending = await tenantUtils.assertTenantSignUpAllowed(
+          {
+            context: { adapter: { findOne: vi.fn(async () => invite) } },
+          } as unknown as Parameters<typeof tenantUtils.assertTenantSignUpAllowed>[0],
+          { requireInviteForTenantSignUp: true },
+          tenant,
+          invite.email,
+          invite.token,
+        );
+        expect(pending?.id).toBe(invite.id);
+
+        const adapter = {
+          update: vi.fn(
+            async (args: { where: { field: string; value: unknown; operator?: string }[] }) => {
+              const expiresAt = args.where.find((clause) => clause.field === "expiresAt");
+              if (
+                !expiresAt ||
+                expiresAt.operator !== "gt" ||
+                !(expiresAt.value instanceof Date) ||
+                invite.expiresAt <= expiresAt.value
+              ) {
+                return null;
+              }
+              return { ...invite, consumedAt: new Date() };
+            },
+          ),
+          delete: vi.fn(),
+        };
+        const internalAdapter = {
+          createUser: vi.fn(),
+          createAccount: vi.fn(),
+        };
+        const ctx = {
+          context: { adapter, internalAdapter, logger: { error: vi.fn() } },
+        } as unknown as Parameters<typeof tenantUtils.createUserAccountWithInvite>[0];
+
+        vi.setSystemTime(validatedAt.getTime() + 1000);
+
+        await expect(
+          tenantUtils.createUserAccountWithInvite(ctx, userData, accountData, pending),
+        ).rejects.toMatchObject({ body: { code: "INVITE_INVALID" } });
+
+        expect(internalAdapter.createUser).not.toHaveBeenCalled();
+        expect(adapter.update).toHaveBeenCalledWith({
+          model: "tenantInvite",
+          where: [
+            { field: "id", value: invite.id },
+            { field: "consumedAt", value: null },
+            { field: "revokedAt", value: null },
+            { field: "expiresAt", value: new Date(validatedAt.getTime() + 1000), operator: "gt" },
+          ],
+          update: { consumedAt: expect.any(Date) },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
