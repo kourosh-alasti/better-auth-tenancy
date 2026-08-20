@@ -17,7 +17,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { parseSetCookieHeader } from "better-auth/cookies";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { afterAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { tenantAuth } from "../src/index";
 import * as schema from "./pg/schema";
@@ -31,34 +31,38 @@ const schemaSql = readFileSync(
   "utf8",
 );
 
-describe.runIf(runPostgres)("postgres integration", async () => {
-  const client = postgres(connectionString, { max: 1 });
-  const db = drizzle(client, { schema });
-
-  // Dedicated CI database — reset so indexes/tables match this schema.
-  await client.unsafe(`DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`);
-  await client.unsafe(schemaSql);
-
-  const auth = betterAuth({
-    baseURL: "http://localhost:3000",
-    secret: "better-auth-secret-that-is-long-enough-for-validation-test",
-    database: drizzleAdapter(db, {
-      provider: "pg",
-      schema,
-    }),
-    emailAndPassword: { enabled: true },
-    rateLimit: { enabled: false },
-    plugins: [
-      tenantAuth({
-        canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
-      }),
-    ],
-  });
-
+describe.runIf(runPostgres)("postgres integration", () => {
+  let client: ReturnType<typeof postgres>;
+  let auth: ReturnType<typeof betterAuth>;
   const adminHeaders = new Headers({ "x-admin": "1" });
 
+  beforeAll(async () => {
+    client = postgres(connectionString, { max: 1 });
+    const db = drizzle(client, { schema });
+
+    // Dedicated CI database — reset so indexes/tables match this schema.
+    await client.unsafe(`DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`);
+    await client.unsafe(schemaSql);
+
+    auth = betterAuth({
+      baseURL: "http://localhost:3000",
+      secret: "better-auth-secret-that-is-long-enough-for-validation-test",
+      database: drizzleAdapter(db, {
+        provider: "pg",
+        schema,
+      }),
+      emailAndPassword: { enabled: true },
+      rateLimit: { enabled: false },
+      plugins: [
+        tenantAuth({
+          canManageTenants: (ctx) => ctx.headers?.get("x-admin") === "1",
+        }),
+      ],
+    });
+  });
+
   afterAll(async () => {
-    await client.end({ timeout: 5 });
+    await client?.end({ timeout: 5 });
   });
 
   it("creates a tenant and owner membership transactionally", async () => {
