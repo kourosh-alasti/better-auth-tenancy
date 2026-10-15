@@ -21,7 +21,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "vp pack && vp run nextjs-demo#build",
+    "build": "vp pack && vp run nextjs-demo#build && pnpm docs:build",
     "dev": "vp pack --watch",
     "typecheck": "tsc --noEmit",
     "lint": "vp lint",
