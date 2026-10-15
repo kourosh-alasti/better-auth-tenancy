@@ -97,6 +97,18 @@ await authClient.signUpEmailTenant({
 
 Full guides and API reference live in the repo under [`docs/`](./docs/). A complete Next.js example with PostgreSQL and Drizzle is in [`examples/nextjs-demo/`](./examples/nextjs-demo/).
 
+### Deploying the docs to Cloudflare Workers
+
+Use these Workers Builds settings for `better-auth-tenancy-docs`:
+
+- Root directory: `/`
+- Build command: `pnpm docs:build`
+- Deploy command: `pnpm exec wrangler deploy`
+
+The docs build generates `docs/.vitepress/dist`, the static assets directory configured in `wrangler.jsonc`. It does not require the Next.js demo's database or Better Auth environment variables. The root `pnpm build` also builds the docs, so the default build command produces the required assets too.
+
+To build and deploy locally, run `pnpm docs:deploy`.
+
 ## License
 
 MIT
