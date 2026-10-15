@@ -1,0 +1,21 @@
+README.md
+  s_2a3b939e85932a::t_f161e1d427944c 100-111
+package.json
+  s_2a3b939e85932a::t_f161e1d427944c 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b398300bb201992a5b78521cd78f183d745110ce",
+  "prompts": {},
+  "sessions": {
+    "s_2a3b939e85932a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a14142-9d3d-7bd2-95c6-7d4cee50c3e0",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Kourosh Alasti <coding@kouroshalasti.com>"
+    }
+  }
+}
